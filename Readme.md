@@ -41,14 +41,19 @@ for the LLM, silent/free TTS, free image generation, ffmpeg-only video).
 ### 1. Install
 
 ```bash
-# Python 3.10+ recommended (tested on 3.12)
+# Python 3.10+ recommended (tested on 3.11 and 3.12)
 git clone <repo-url>
-cd "Agentic Project"
-python -m pip install -r requirements.txt
+cd Automated-Story-Generation
+python -m venv .venv
+.venv/Scripts/python -m pip install -r requirements.txt   # Windows
+# .venv/bin/python -m pip install -r requirements.txt     # macOS / Linux
 ```
 
 You **also need ffmpeg on your PATH** (`ffmpeg -version` should work). Audio &
-video composition uses it.
+video composition uses it. On Windows: `winget install Gyan.FFmpeg`.
+
+Local Stable Diffusion (`LOCAL_SD=1`) is optional and pulls in PyTorch, so it
+has its own file: see [`requirements-local-sd.txt`](requirements-local-sd.txt).
 
 ### 2. (Optional) configure providers
 

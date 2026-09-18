@@ -1,0 +1,10 @@
+# Local Stable Diffusion (optional — set LOCAL_SD=1 in .env to use).
+#
+# Install CUDA-enabled torch first. For RTX 30/40-series:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# Then:
+#   pip install -r requirements-local-sd.txt
+diffusers>=0.27          # SDXL Turbo / SD 1.5 / Flux pipelines
+transformers>=4.40
+accelerate>=0.30
+safetensors>=0.4
