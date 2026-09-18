@@ -77,6 +77,13 @@ Outputs go to `data/outputs/<project_id>/`, version snapshots to
 - Tests force `LLM_PROVIDER=mock` and `POLLINATIONS_DISABLE=1` (see `tests/conftest.py`)
   and monkeypatch `shared.constants` paths into `tmp_path`.
 
+## Baseline (M0, 2026-09-18)
+
+52/52 tests pass. One CLI run (`--duration 30 --scenes 4`, mock LLM, edge-tts, Pollinations)
+took **779 s**: story <1 s, audio 32 s, **images ~630 s (15 serial Pollinations calls, ~42 s each)**,
+shot rendering + scene assembly 24 s, final compose ~7 s, subtitle translation 81 s.
+Measured voice-vs-picture drift: the voice leads the picture by 2.4 s in scene 1, 3.6 s in scene 2, 5.0 s in scene 3 and 6.1 s in scene 4.
+
 ## Known issues (tracked for M1)
 
 - Audio/video/subtitle timelines diverge: the master audio is dialogue concatenated with no gaps,
@@ -88,6 +95,12 @@ Outputs go to `data/outputs/<project_id>/`, version snapshots to
 - `run_registry.push_event` calls `asyncio.Queue.put_nowait` from a worker thread (not thread-safe).
 - The legacy `image.pollinations.ai` endpoint silently serves the `sana` model at 1024x576 instead
   of FLUX; the new `gen.pollinations.ai` requires an API key.
+- Subtitle translation calls Google Translate line by line and gets rate-limited: in the M0
+  baseline run all 48 translated lines failed, fell back to English, and were still embedded as
+  "French/Spanish/German/Urdu" tracks while the log reported success.
+- `--duration 30` produced a 60.5 s film: the template's per-scene minimum (8 s) and real TTS
+  lengths overshoot the target.
+- Pollinations images come back as JPEG bytes saved with a `.png` extension.
 - The UI offers a Japanese subtitle option, but only English/French/Spanish/German/Urdu tracks are generated.
 - `backend/routes/projects.py` splits paths on `/` only (breaks on Windows).
 - Gemini uses the deprecated `google-generativeai` SDK and the retired `gemini-1.5-flash` default.
