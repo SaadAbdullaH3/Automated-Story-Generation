@@ -185,7 +185,8 @@ A finished run produces these JSON artifacts in `data/outputs/<project_id>/`:
 - `phase2_audio_handoff.json`, `phase3_video_handoff.json`
 - `timing_manifest.json`
 - `audio_summary.json`, `video_summary.json`, `summary.json`
-- `final_output.mp4` (and optionally `final_output_subtitled.mp4`)
+- `final_output.mp4` (picture + master audio), and `final_output_multilang.mp4`
+  (the same film with switchable subtitle tracks, when subtitles are on)
 
 ---
 
@@ -210,8 +211,13 @@ If no LLM key is configured, a deterministic four-act template (in
 ### Phase 2 — Audio Generation (`agents/audio_agent/`)
 
 * **Input** — `state.script`
-* **Tasks** — per-line TTS with character-consistent voices, mood-based BGM,
-  master mix, timing manifest
+* **Tasks** — per-line TTS with character-consistent voices, the film's
+  **timeline**, mood-based BGM per scene, master mix, timing manifest
+* **One timeline for everything** ([`shared/timeline.py`](shared/timeline.py)) —
+  each scene is `pre-roll (establishing shot) → line → gap → line … → tail`.
+  The master audio places every line at its timeline position, the video cuts
+  on the same boundaries, and subtitles use the same numbers, so voices,
+  faces and captions stay in sync for the whole film.
 * **Tools**
   * **edge-tts** (default, free, online) — Microsoft Azure Neural Voices mapped dynamically to character archetypes (e.g., `en-US-AriaNeural`, `en-US-ChristopherNeural`).
   * **gTTS** (fallback, free, online)
@@ -231,14 +237,18 @@ Two-tier rendering for cinematic-feeling output **even without paid APIs**:
 Instead of one still per scene, the agent renders a **separate sub-clip for
 every dialogue line** so a 4-scene project becomes ~12-15 cuts:
 
-* Generate one **establishing image** per scene (Pollinations.ai by default)
+* Generate a **shot bank** of 3 images per scene — wide, detail, alternate
+  angle (Pollinations.ai by default)
 * Generate one **portrait per character** in the cast
-* For each dialogue line, render a sub-clip:
-  - **Narrator lines** -> establishing shot with subtle motion
-  - **Character lines** -> that character's portrait with subtle ken-burns
-* Within a scene, sub-clips **crossfade** together (200 ms)
-* Between scenes, longer crossfade (400 ms)
+* Cut each scene to the audio timeline:
+  - **Pre-roll** -> the wide establishing shot
+  - **Narrator lines** -> rotate through the scene's shot bank
+  - **Character lines** -> that character's portrait (B-roll cutaway on long lines)
+* Shots **crossfade** within a scene (200 ms) and between scenes (400 ms); each
+  clip is rendered a few frames longer to cover its crossfade, so the film is
+  exactly as long as the audio and every cut lands on its line
 * Cinematic post: vignette + film grain + mild S-curve
+* Re-composition (after an edit) re-renders only scenes whose shots changed
 
 Result: a project that previously had 4 long static shots now has 12-15 cuts
 synced to the dialogue, alternating between wide and close-up just like
@@ -261,13 +271,19 @@ will automatically:
 | `HF_TOKEN` | DAMO text-to-video-ms | — |
 | (none) | ffmpeg ken-burns | heuristic mouth-zoom |
 
-#### Subtitles & Multi-Language Support
-* The pipeline natively supports **multi-language subtitle translations** (English, Japanese, Spanish, etc.).
-* Dialogue is intercepted and translated via the LLM agent, then burned directly into the final MP4.
-* Uses system-level font fallbacks via `ffmpeg`'s `libass` to ensure perfect rendering of non-Latin CJK characters.
+#### Subtitles & multi-language support
+* Subtitles are embedded as **switchable soft tracks** (pick the language in
+  your player): English + the language chosen in the UI/CLI, plus any listed in
+  `SUBTITLE_EXTRA_LANGUAGES`. Supported languages live in
+  [`shared/languages.py`](shared/languages.py) (Urdu, Hindi, Arabic, French,
+  Spanish, German, Japanese, Chinese, ...).
+* Translation uses the configured LLM, falling back to MyMemory (free, no key).
+  **If translation fails, that language is skipped** — an English track is never
+  shipped under a foreign label. Translations are cached until the dialogue changes.
 
 * **Output** — `VideoOutput` with multi-shot `frames`, `portraits`,
-  `final_output.mp4` (and `final_output_subtitled.mp4`), plus per-shot MP4s under `data/outputs/<pid>/video/shots/`
+  `final_output.mp4` / `final_output_multilang.mp4`, plus per-shot MP4s under
+  `data/outputs/<pid>/video/shots/`
 
 ### Phase 4 — Web Interface (`backend/` + `frontend/`)
 
@@ -279,6 +295,7 @@ will automatically:
   POST /api/pipeline/rerun            re-run phase 1/2/3
   GET  /api/pipeline/state/<pid>      current full state
   GET  /api/pipeline/status/<pid>     lightweight status snapshot
+  GET  /api/pipeline/languages        supported subtitle languages
   POST /api/edit/classify             classify intent only
   POST /api/edit/apply                apply an edit (versioned)
   GET  /api/edit/log/<pid>            edit history
@@ -320,9 +337,9 @@ Detected `target` is always one of `audio`, `video_frame`, `video`, `script`.
 | "Change voice tone to whispered" | `audio` | re-run TTS w/ tone=whispered + remix |
 | "make scene 2 darker" | `video_frame` | apply `darker` filter to scene 2 + recompose |
 | "add background music tense" | `audio` | regenerate BGM at mood=tense + remix |
-| "remove the subtitles" | `video` | recompose video without burn-in |
-| "change character design" | `video_frame` | regenerate all scene images + recompose |
-| "speed up this scene" | `video` | ffmpeg `setpts`+`atempo` chain |
+| "remove the subtitles" | `video` | recompose the film without subtitle tracks |
+| "change character design" | `video_frame` | regenerate character portraits + recompose |
+| "speed up 1.5x" / "slow down" | `video` | persistent speed factor (`setpts` + `atempo`), subtitles retimed |
 | "regenerate the script" | `script` | re-run phase 1, cascade to 2 & 3 |
 | "apply vintage filter" | `video_frame` | apply Pillow vintage filter chain |
 
@@ -342,6 +359,9 @@ Every successful pipeline run **and** every successful edit creates an
 `brightness contrast saturation sharpness grayscale sepia blur darker brighter warm cool vintage invert`
 
 Style presets that chain filters: `cinematic noir dreamy anime pastel vintage cold_thriller`.
+Scene-scoped filters ("make scene 2 darker") change only that scene, including
+per-scene copies of its characters' portraits. Unknown filter names fail the
+edit with a clear error instead of silently doing nothing.
 
 ---
 
@@ -385,11 +405,11 @@ The test suite covers:
 * **State manager** — version increments, asset persistence + restore, edit log
 * **Integration** — full prompt-to-MP4 pipeline in mock/silent mode (≈8 s)
 
-Current results: **46 / 46 passing**.
+Current results: **87 / 87 passing**.
 
 ```
 $ python -m pytest -q
-.............................................. 46 passed in 18s
+87 passed in 62s
 ```
 
 ---
@@ -405,7 +425,10 @@ All knobs live in `.env`. Everything is optional.
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | OpenAI |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | Anthropic Claude |
 | `ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE_ID` | premium TTS |
+| `POLLINATIONS_API_KEY` / `POLLINATIONS_MODEL` | free Pollinations account key -> real models (default `tongyi-mai/z-image-turbo`); without it the legacy endpoint serves a weaker model at reduced size |
 | `POLLINATIONS_DISABLE` | set to `1` to skip the free image-gen API |
+| `SUBTITLE_EXTRA_LANGUAGES` | extra subtitle tracks, e.g. `Urdu,French` |
+| `MYMEMORY_EMAIL` | raises the free MyMemory translation quota (~5k -> ~50k chars/day) |
 | `SD_API_URL` | Automatic1111 / ComfyUI URL for local Stable Diffusion |
 
 Mock mode is the default. The CI / unit-tests run that way to stay deterministic.

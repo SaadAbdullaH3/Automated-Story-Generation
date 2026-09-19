@@ -114,7 +114,6 @@ async function onPipelineComplete(projectId, payload) {
     const url = `/assets/${projectId}/${fileName}`;
     $("player").src = url;
     $("downloadVideo").href = url;
-    $("openProject").href = `/assets/${projectId}/`;
     $("downloadRow").style.display = "";
   }
   const meta = {
@@ -237,6 +236,20 @@ async function revert(version) {
   loadHistory(state.projectId);
 }
 
+// ---- subtitle languages ----------------------------------------------------
+
+async function loadLanguages() {
+  try {
+    const langs = await fetch("/api/pipeline/languages").then((r) => r.json());
+    const sel = $("sub-lang");
+    sel.innerHTML = langs
+      .map((l) => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`)
+      .join("");
+  } catch (e) {
+    /* keep the English-only fallback option */
+  }
+}
+
 // ---- provider badge --------------------------------------------------------
 
 async function loadProviderBadge() {
@@ -272,4 +285,5 @@ document.addEventListener("DOMContentLoaded", () => {
   $("classifyEdit").addEventListener("click", classifyEdit);
   bindChips();
   loadProviderBadge();
+  loadLanguages();
 });

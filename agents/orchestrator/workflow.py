@@ -13,6 +13,7 @@ from agents.video_agent import VideoAgent
 from shared.schemas.pipeline import PipelineState
 from shared.utils.ids import new_project_id
 from shared.utils.logging import get_logger
+from state_manager.snapshot import referenced_files
 from state_manager.state_manager import StateManager
 
 from .graph import PipelineGraph
@@ -74,7 +75,9 @@ class PipelineOrchestrator:
                            message="Generating story, characters, and scenes",
                            progress=0.05))
         try:
-            graph.run(ctx, on_node=lambda name, _c: emit(self._node_started_event(name, project_id)))
+            graph.run(ctx,
+                      on_node=lambda name, _c: emit(self._node_event(name, project_id, done=False)),
+                      on_node_done=lambda name, _c: emit(self._node_event(name, project_id, done=True)))
         except Exception as e:  # noqa: BLE001
             emit(ProgressEvent(phase="error", status="failed", project_id=project_id,
                                message=str(e), progress=1.0))
@@ -113,26 +116,37 @@ class PipelineOrchestrator:
         state = self.sm.latest(project_id)
         if not state:
             raise ValueError(f"no project state for {project_id}")
-        emit = on_event or (lambda _e: None)
-        if phase == "story":
-            emit(ProgressEvent(phase="story", status="started", project_id=project_id,
-                               message="Re-running story", progress=0.1))
-            self.story.run(state)
-            emit(ProgressEvent(phase="story", status="complete", project_id=project_id,
-                               message="Story regenerated", progress=0.4))
-            self.audio.run(state)
-            self.video.run(state)
-        elif phase == "audio":
-            emit(ProgressEvent(phase="audio", status="started", project_id=project_id,
-                               message="Re-running audio", progress=0.1))
-            self.audio.run(state)
-            self.video.run(state)
-        elif phase == "video":
-            emit(ProgressEvent(phase="video", status="started", project_id=project_id,
-                               message="Re-running video", progress=0.1))
-            self.video.run(state)
-        else:
+        if phase not in ("story", "audio", "video"):
             raise ValueError(f"unknown phase '{phase}'")
+        emit = on_event or (lambda _e: None)
+
+        # Re-runs keep the project's existing settings.
+        v, a = state.video, state.audio
+        with_bgm = a.bgm_enabled if a else True
+        video_kwargs = dict(
+            with_subtitles=v.has_subtitles if v else True,
+            subtitle_language=v.subtitle_language if v else "English",
+            width=v.width if v else 1280, height=v.height if v else 720,
+            fps=v.fps if v else 24,
+            use_text_to_video=v.used_text_to_video if v else None,
+            use_lip_sync=v.used_lip_sync if v else None,
+            cinematic_post=v.cinematic_post if v else True,
+        )
+        steps = ["story", "audio", "video"][["story", "audio", "video"].index(phase):]
+        for i, step in enumerate(steps):
+            emit(ProgressEvent(phase=step, status="started", project_id=project_id,
+                               message=f"Re-running {step}", progress=0.1 + 0.8 * i / len(steps)))
+            if step == "story":
+                self.story.run(state, target_duration_s=state.script.story.target_duration_s
+                               if state.script else 45,
+                               scene_count=len(state.script.scenes) if state.script else 4)
+            elif step == "audio":
+                self.audio.run(state, with_bgm=with_bgm)
+            else:
+                self.video.run(state, **video_kwargs)
+            emit(ProgressEvent(phase=step, status="complete", project_id=project_id,
+                               message=f"{step.capitalize()} regenerated",
+                               progress=0.1 + 0.8 * (i + 1) / len(steps)))
         version = self.sm.snapshot(
             state,
             asset_paths=self._collect_assets(state),
@@ -167,20 +181,23 @@ class PipelineOrchestrator:
         return g
 
     @staticmethod
-    def _node_started_event(name: str, project_id: str) -> ProgressEvent:
+    def _node_event(name: str, project_id: str, done: bool) -> ProgressEvent:
+        # (phase, started message, started progress, done message, done progress)
         mapping = {
-            "phase1_story": ("story", "Generating story + characters", 0.10),
-            "phase2_audio": ("audio", "Synthesizing voices + BGM",     0.45),
-            "phase3_video": ("video", "Generating images + composing video", 0.75),
+            "phase1_story": ("story", "Generating story + characters", 0.10,
+                             "Story, characters and scenes ready", 0.30),
+            "phase2_audio": ("audio", "Synthesizing voices + BGM", 0.35,
+                             "Voices, music and timeline ready", 0.55),
+            "phase3_video": ("video", "Generating images + composing video", 0.60,
+                             "Video composed", 0.95),
         }
-        phase, msg, prog = mapping.get(name, (name, name, 0.5))
-        return ProgressEvent(phase=phase, status="started",
-                             project_id=project_id, message=msg, progress=prog)
+        phase, start_msg, start_p, done_msg, done_p = mapping.get(
+            name, (name, name, 0.5, name, 0.5))
+        return ProgressEvent(phase=phase, status="complete" if done else "started",
+                             project_id=project_id,
+                             message=done_msg if done else start_msg,
+                             progress=done_p if done else start_p)
 
     @staticmethod
     def _collect_assets(state: PipelineState) -> List[str]:
-        paths: List[str] = []
-        paths.extend(state.phase1.artifact_paths or [])
-        paths.extend(state.phase2.artifact_paths or [])
-        paths.extend(state.phase3.artifact_paths or [])
-        return paths
+        return referenced_files(state)

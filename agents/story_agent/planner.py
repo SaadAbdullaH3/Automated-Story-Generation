@@ -12,6 +12,9 @@ from typing import List
 from shared.schemas.story import (
     Character, CharacterRoster, DialogueLine, Scene, ScriptOutput, StoryOutput,
 )
+from shared.timeline import (
+    LINE_GAP_MS, MIN_LINE_MS, SCENE_PREROLL_MS, SCENE_TAIL_MS, estimate_line_ms,
+)
 
 
 _GENRE_HINTS = {
@@ -116,39 +119,48 @@ def template_script(project_id: str, prompt: str,
         else:
             arc = [base_arc[0], base_arc[-1]]
 
-    # ---- per-scene budget so total audio ~= target_duration_s ----------
-    # We aim for ~85% of target budget as actual dialogue audio (the rest
-    # is establishing-shot motion, transitions, breathing room).
-    total_budget_ms = int(target_duration_s * 1000 * 0.92)
-    per_scene_budget_ms = max(8000, total_budget_ms // n)
+    # ---- per-scene speech budget so the film lands near target_duration_s --
+    # Each scene spends fixed time on its establishing pre-roll, gaps between
+    # lines and a tail hold (see shared/timeline.py); the rest is speech.
+    target_ms = target_duration_s * 1000
+    per_scene_ms = target_ms / n
+    per_scene_speech_ms = per_scene_ms - SCENE_PREROLL_MS - SCENE_TAIL_MS
 
     scenes: List[Scene] = []
     for i, (label, tone, mood, camera, transition) in enumerate(arc):
         scene_id = f"scene_{i+1}"
         beat = _scene_beat(label, prompt, rng)
 
-        # Base dialogue (3 turns) — narrator opens, protagonist responds, supporting reacts.
-        line_specs = [
-            ("char_narrator",    beat["narration"],     "reflective", 4500),
-            ("char_protagonist", beat["aria"],          tone,         3500),
-            ("char_supporting",  beat["kai"],           "concerned",  3500),
-        ]
+        # Base dialogue — narrator opens, protagonist responds, supporting reacts —
+        # then extra back-and-forth, keeping only lines that fit the budget.
+        narrator = ("char_narrator",    beat["narration"], "reflective")
+        aria     = ("char_protagonist", beat["aria"],      tone)
+        kai      = ("char_supporting",  beat["kai"],       "concerned")
+        # The narrator frames the first and last scenes; middle scenes open with
+        # the characters, so short films (one line per scene) still let them speak.
+        if i == 0 or i == n - 1:
+            base = [narrator, aria, kai]
+        elif i % 2 == 1:
+            base = [aria, kai, narrator]
+        else:
+            base = [kai, aria, narrator]
+        extras = [(c, t, e) for c, t, e, _ in _extra_exchanges(label, prompt, rng)]
+        # Extras may repeat for very long targets.
+        candidates = base + extras * 3
 
-        # If the per-scene budget is bigger than the base dialogue, add extra
-        # back-and-forth exchanges until the budget is met.
-        extra_pool = _extra_exchanges(label, prompt, rng)
-        used_ms = sum(d for _, _, _, d in line_specs)
-        ex_idx = 0
-        while used_ms < per_scene_budget_ms and ex_idx < len(extra_pool):
-            line_specs.append(extra_pool[ex_idx])
-            used_ms += extra_pool[ex_idx][3]
-            ex_idx += 1
-        # If still under budget (e.g. very long target), cycle through pool again.
-        while used_ms < per_scene_budget_ms:
-            spec = extra_pool[ex_idx % len(extra_pool)]
-            line_specs.append(spec)
-            used_ms += spec[3]
-            ex_idx += 1
+        line_specs: List[tuple] = []
+        used_ms = 0
+        for char_id, text, emo in candidates:
+            est = estimate_line_ms(text)
+            cost = est + (LINE_GAP_MS if line_specs else 0)
+            # Take the line if the scene has none yet, or if it brings the
+            # scene closer to its budget than stopping here would.
+            if not line_specs or abs(used_ms + cost - per_scene_speech_ms) \
+                    < abs(used_ms - per_scene_speech_ms):
+                line_specs.append((char_id, text, emo, est))
+                used_ms += cost
+            if used_ms >= per_scene_speech_ms - MIN_LINE_MS / 2:
+                break
 
         lines: List[DialogueLine] = []
         for j, (char_id, text, emo, dur_ms) in enumerate(line_specs):
@@ -170,7 +182,7 @@ def template_script(project_id: str, prompt: str,
                 f"{beat['visual']}, {camera}, cinematic, highly detailed, dramatic lighting"
             ),
             camera=camera,
-            duration_ms=used_ms + 2000,  # +2s breathing room (establishing motion)
+            duration_ms=used_ms + SCENE_PREROLL_MS + SCENE_TAIL_MS,
             dialogue=lines,
             music_mood=mood,
             transition_in=transition,
@@ -181,7 +193,7 @@ def template_script(project_id: str, prompt: str,
         title=title,
         logline=logline,
         synopsis=(f"An exploration inspired by '{prompt}'. "
-                  "Across four acts, our protagonist Aria — joined by Kai — "
+                  f"Across {n} acts, our protagonist Aria — joined by Kai — "
                   "confronts the question implied by the prompt and emerges changed."),
         genre=genre,
         themes=themes,

@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
+from shared.languages import supported_names
 from shared.utils.ids import new_project_id
 from shared.utils.logging import get_logger
 from state_manager.state_manager import StateManager
@@ -74,6 +75,12 @@ def rerun_phase(req: PhaseRerunRequest, background: BackgroundTasks):
         status="running",
         websocket=f"/ws/progress/{req.project_id}",
     )
+
+
+@router.get("/languages")
+def subtitle_languages():
+    """Subtitle languages the pipeline can translate + embed."""
+    return supported_names()
 
 
 @router.get("/state/{project_id}")

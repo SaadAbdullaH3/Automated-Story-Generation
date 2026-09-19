@@ -99,28 +99,37 @@ FILTERS = {
 
 class ImageEditTool(BaseTool):
     name = "vision.edit_image"
-    description = "Apply one or more named filters to an image."
+    description = "Apply named filters or style presets (noir, cinematic, ...) to an image."
     category = "vision"
 
     def run(self, in_path: str, out_path: str, filters: list | None = None,
             params: Dict[str, Any] | None = None, **_) -> ToolResult:
         from PIL import Image
+        from .style_transfer import STYLES
+
+        names = [str(n).lower() for n in (filters or [])]
+        unknown = [n for n in names if n not in FILTERS and n not in STYLES]
+        if unknown or not names:
+            return ToolResult(success=False,
+                              error=f"unknown filter(s) {unknown or names}; available: "
+                                    f"{list_filter_names()}")
         in_p = Path(in_path)
         out_p = Path(out_path)
         out_p.parent.mkdir(parents=True, exist_ok=True)
         img = Image.open(in_p).convert("RGB")
         applied = []
-        for name in filters or []:
-            fn = FILTERS.get(name.lower())
-            if not fn:
-                continue
-            kwargs = (params or {}).get(name, {}) if params else {}
-            img = fn(img, **kwargs) if kwargs else fn(img)
-            applied.append(name)
+        for name in names:
+            # Style presets expand to a chain of basic filters.
+            chain = STYLES.get(name) if name not in FILTERS else [(name, (params or {}).get(name, {}))]
+            for fname, kwargs in chain:
+                fn = FILTERS[fname]
+                img = fn(img, **kwargs) if kwargs else fn(img)
+                applied.append(fname)
         img.save(out_p)
         return ToolResult(success=True, data=str(out_p),
-                          metadata={"applied": applied})
+                          metadata={"applied": applied, "requested": names})
 
 
 def list_filter_names() -> list[str]:
-    return sorted(FILTERS.keys())
+    from .style_transfer import STYLES
+    return sorted(set(FILTERS) | set(STYLES))

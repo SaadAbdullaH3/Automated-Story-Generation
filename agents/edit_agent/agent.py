@@ -7,11 +7,12 @@ The agent itself is stateful via StateManager; LangGraph's MemorySaver concept
 is mirrored by storing the running PipelineState per project.
 """
 from __future__ import annotations
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from shared.schemas.edit import EditCommand, EditIntent, EditResult
 from shared.schemas.pipeline import PipelineState
 from shared.utils.logging import get_logger
+from state_manager.snapshot import referenced_files
 from state_manager.state_manager import StateManager
 
 from .executor import EditExecutor
@@ -32,11 +33,7 @@ class EditAgent:
     def classify(self, command: EditCommand,
                  state: Optional[PipelineState] = None) -> EditIntent:
         """Stateless intent classification — used by /api/edit/classify."""
-        scenes, chars = [], []
-        if state and state.script:
-            scenes = [s.scene_id for s in state.script.scenes]
-            chars = [c.id for c in state.script.characters.characters]
-        return self.classifier.classify(command.query, scenes, chars)
+        return self.classifier.classify(command.query, *self._context(state))
 
     def edit(self, command: EditCommand) -> EditResult:
         """Classify, plan, execute, snapshot. Returns the new version + result."""
@@ -48,9 +45,7 @@ class EditAgent:
                 error=f"no project state for {command.project_id}",
             )
 
-        scenes = [s.scene_id for s in state.script.scenes] if state.script else []
-        chars = [c.id for c in state.script.characters.characters] if state.script else []
-        intent = self.classifier.classify(command.query, scenes, chars)
+        intent = self.classifier.classify(command.query, *self._context(state))
         log.info("[%s] classified '%s' -> %s/%s/%s",
                  command.project_id, command.query, intent.intent,
                  intent.target, intent.scope)
@@ -104,9 +99,14 @@ class EditAgent:
     # ---- helpers ---------------------------------------------------------
 
     @staticmethod
+    def _context(state: Optional[PipelineState]) -> Tuple[List[str], List[str], Dict[str, str]]:
+        """(scene ids, character ids, character id -> name) for the classifier."""
+        if not state or not state.script:
+            return [], [], {}
+        chars = state.script.characters.characters
+        return ([s.scene_id for s in state.script.scenes],
+                [c.id for c in chars], {c.id: c.name for c in chars})
+
+    @staticmethod
     def _collect_assets(state: PipelineState) -> List[str]:
-        out: List[str] = []
-        out.extend(state.phase1.artifact_paths)
-        out.extend(state.phase2.artifact_paths)
-        out.extend(state.phase3.artifact_paths)
-        return out
+        return referenced_files(state)

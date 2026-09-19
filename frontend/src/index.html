@@ -27,12 +27,9 @@
         <label>Scenes <input type="number" id="scenes" value="4" min="2" max="8"/></label>
         <label class="check"><input type="checkbox" id="bgm" checked/> BGM</label>
         <label class="check"><input type="checkbox" id="subs" checked/> Subtitles</label>
+        <!-- Options are filled from /api/pipeline/languages (shared/languages.py). -->
         <select id="sub-lang" style="margin-left:5px; padding:2px">
           <option value="English">English</option>
-          <option value="Japanese">Japanese</option>
-          <option value="Spanish">Spanish</option>
-          <option value="French">French</option>
-          <option value="German">German</option>
         </select>
       </div>
       <button id="runBtn" class="primary">Generate</button>
@@ -73,7 +70,6 @@
       <video id="player" controls poster=""></video>
       <div class="row" id="downloadRow" style="display:none">
         <a id="downloadVideo" class="primary" download>Download MP4</a>
-        <a id="openProject" class="secondary" target="_blank">Project Folder</a>
       </div>
       <div class="meta" id="metaPanel"></div>
     </div>

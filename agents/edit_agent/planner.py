@@ -53,23 +53,12 @@ def plan(intent: EditIntent) -> List[EditStep]:
                 EditStep("recompose_video", "video", "global")]
 
     if target == "video_frame":
-        if name == "regenerate_scene":
-            return [
-                EditStep("regenerate_scene", "video_frame", scope, params),
-                EditStep("recompose_video", "video", "global"),
-            ]
+        # These handlers recompose the video themselves.
         if name in ("apply_filter", "adjust_scene_aesthetic"):
-            return [
-                EditStep("apply_filter", "video_frame", scope, params),
-                EditStep("recompose_video", "video", "global"),
-            ]
+            return [EditStep("apply_filter", "video_frame", scope, params)]
         if name == "change_character_design":
-            return [
-                EditStep("regenerate_all_scenes", "video_frame", scope, params),
-                EditStep("recompose_video", "video", "global"),
-            ]
-        return [EditStep("regenerate_scene", "video_frame", scope, params),
-                EditStep("recompose_video", "video", "global")]
+            return [EditStep("regenerate_portraits", "video_frame", scope, params)]
+        return [EditStep("regenerate_scene", "video_frame", scope, params)]
 
     # target == "video"
     if name == "remove_subtitles":
@@ -77,5 +66,9 @@ def plan(intent: EditIntent) -> List[EditStep]:
     if name == "add_subtitles":
         return [EditStep("recompose_video", "video", "global", {"subtitles": True})]
     if name in ("speed_up", "slow_down"):
-        return [EditStep("change_speed", "video", scope, params)]
+        factor = float(params.get("factor", 1.5 if name == "speed_up" else 0.75))
+        # "slow down 2x" means half speed, not double.
+        if (name == "slow_down") == (factor > 1):
+            factor = 1 / factor
+        return [EditStep("change_speed", "video", scope, {**params, "factor": factor})]
     return [EditStep("recompose_video", "video", "global", params)]

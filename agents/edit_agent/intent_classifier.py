@@ -11,6 +11,7 @@ import re
 from typing import Dict, List, Tuple
 
 from mcp.tools.llm_tools.llm_client import get_llm_client
+from mcp.tools.vision_tools.image_edit_tool import list_filter_names
 from shared.schemas.edit import EditIntent
 from shared.utils.logging import get_logger
 
@@ -62,11 +63,9 @@ _RULES: List[Tuple[re.Pattern, str, str, str]] = [
 ]
 
 
-_FILTER_NAMES = {
-    "grayscale", "sepia", "vintage", "noir", "cinematic", "dreamy",
-    "warm", "cool", "pastel", "anime", "blur", "darker", "brighter",
-    "contrast", "saturation", "sharpness", "invert",
-}
+# Every filter / style preset the image edit tool can apply, longest first so
+# e.g. "cold_thriller" wins over "cool". Kept in sync with the tool itself.
+_FILTER_NAMES = sorted(list_filter_names(), key=lambda n: (-len(n), n))
 
 _TONES = {
     "whisper": "whispered", "whispered": "whispered",
@@ -116,23 +115,28 @@ class IntentClassifier:
     # ---- public API ------------------------------------------------------
 
     def classify(self, query: str, scenes: List[str] | None = None,
-                 characters: List[str] | None = None) -> EditIntent:
+                 characters: List[str] | None = None,
+                 character_names: Dict[str, str] | None = None) -> EditIntent:
+        """`characters` are ids (char_protagonist); `character_names` maps id -> name
+        (Aria) so users can refer to characters the way the story does."""
+        names = character_names or {}
         # LLM path first if available; else keyword fallback.
         if self.llm.provider != "mock":
             try:
-                return self._llm_classify(query, scenes or [], characters or [])
+                return self._llm_classify(query, scenes or [], characters or [], names)
             except Exception as e:  # noqa: BLE001
                 log.warning("LLM intent classification failed (%s) — using keyword fallback", e)
-        return self._keyword_classify(query, scenes or [], characters or [])
+        return self._keyword_classify(query, scenes or [], characters or [], names)
 
     # ---- LLM path --------------------------------------------------------
 
     def _llm_classify(self, query: str, scenes: List[str],
-                      characters: List[str]) -> EditIntent:
+                      characters: List[str], names: Dict[str, str]) -> EditIntent:
+        chars = ", ".join(f"{c} ({names[c]})" if c in names else c for c in characters)
         prompt = CLASSIFICATION_PROMPT.format(
             query=query,
             scenes=", ".join(scenes) or "scene_1, scene_2, scene_3, scene_4",
-            chars=", ".join(characters) or "char_narrator, char_protagonist, char_supporting",
+            chars=chars or "char_narrator, char_protagonist, char_supporting",
         )
         intent = self.llm.generate_structured(
             prompt=prompt,
@@ -145,7 +149,8 @@ class IntentClassifier:
     # ---- keyword path ----------------------------------------------------
 
     def _keyword_classify(self, query: str, scenes: List[str],
-                          characters: List[str]) -> EditIntent:
+                          characters: List[str], names: Dict[str, str] | None = None
+                          ) -> EditIntent:
         q = query.lower().strip()
 
         # Match a scene mention if present.
@@ -159,11 +164,11 @@ class IntentClassifier:
                     scope = f"scene:{s}"
                     break
 
-        # Match a character mention if present.
+        # Match a character mention (by name, e.g. "Aria", or id, e.g. "protagonist").
         char_scope = ""
         for c in characters:
-            short = c.replace("char_", "").lower()
-            if short in q:
+            aliases = {c.replace("char_", "").lower(), (names or {}).get(c, "").lower()}
+            if any(a and re.search(rf"\b{re.escape(a)}\b", q) for a in aliases):
                 char_scope = f"character:{c}"
                 break
         if not scene_match and char_scope:
@@ -211,7 +216,7 @@ class IntentClassifier:
                     break
         elif kind in ("filter", "filter_name"):
             for fn in _FILTER_NAMES:
-                if fn in q:
+                if re.search(rf"\b{re.escape(fn).replace('_', '[ _]')}\b", q):
                     params["filter"] = fn
                     break
         elif kind == "aesthetic":
@@ -243,5 +248,5 @@ class IntentClassifier:
 
 
 # Convenience function for tests.
-def classify(query: str, scenes=None, characters=None) -> EditIntent:
-    return IntentClassifier().classify(query, scenes, characters)
+def classify(query: str, scenes=None, characters=None, character_names=None) -> EditIntent:
+    return IntentClassifier().classify(query, scenes, characters, character_names)

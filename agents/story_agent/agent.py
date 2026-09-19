@@ -16,6 +16,7 @@ from mcp.tools.llm_tools.llm_client import get_llm_client
 from shared.constants import PHASE_STORY
 from shared.schemas.pipeline import PipelineState
 from shared.schemas.story import Character, ScriptOutput
+from shared.timeline import SCENE_PREROLL_MS, SCENE_TAIL_MS, WORDS_PER_SECOND
 from shared.utils.files import project_dir, write_json
 from shared.utils.logging import get_logger
 
@@ -91,6 +92,9 @@ Rules:
 - Every dialogue line's character_id MUST match a character.id from the roster.
 - Visual prompts should be self-contained and image-gen friendly.
 - Total of all scene duration_ms should be roughly {total_ms}.
+- Keep ALL spoken dialogue together to about {word_budget} words (people speak ~2.6 words
+  per second, and each scene also needs ~2 seconds without speech). This is what makes
+  the film land near {duration_s} seconds, so respect it.
 - Make the dialogue feel natural and specific to the genre.
 - The protagonist should appear in every scene; supporting characters can vary.
 """
@@ -138,12 +142,15 @@ class StoryAgent:
 
         scene_duration_ms = (duration_s * 1000) // scene_count
         total_ms = scene_duration_ms * scene_count
+        speech_s = duration_s - scene_count * (SCENE_PREROLL_MS + SCENE_TAIL_MS) / 1000
+        word_budget = max(scene_count * 6, int(speech_s * WORDS_PER_SECOND))
         user_prompt = SCRIPT_USER_PROMPT.format(
             prompt=prompt,
             duration_s=duration_s,
             scene_count=scene_count,
             scene_duration_ms=scene_duration_ms,
             total_ms=total_ms,
+            word_budget=word_budget,
             project_id=project_id,
         )
         try:
