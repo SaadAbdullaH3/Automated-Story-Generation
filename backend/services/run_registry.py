@@ -7,13 +7,16 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections import defaultdict, deque
-from typing import Deque, Dict, List, Optional
+from typing import Deque, Dict, List, Optional, Tuple
 
 
 _state_lock = threading.Lock()
 _runs: Dict[str, Dict] = {}                 # project_id -> dict
 _events: Dict[str, Deque[Dict]] = defaultdict(lambda: deque(maxlen=200))
-_subscribers: Dict[str, List[asyncio.Queue]] = defaultdict(list)
+# Each subscriber queue belongs to the event loop that created it. Pipeline
+# runs push events from worker threads, and asyncio.Queue isn't thread-safe,
+# so pushes are handed to that loop with call_soon_threadsafe.
+_subscribers: Dict[str, List[Tuple[asyncio.AbstractEventLoop, asyncio.Queue]]] = defaultdict(list)
 
 
 def create(project_id: str) -> None:
@@ -35,12 +38,20 @@ def push_event(project_id: str, event: Dict) -> None:
             "message": event.get("message", ""),
             "events": run.get("events", 0) + 1,
         })
-    # Fan out to all WS subscribers.
-    for q in list(_subscribers.get(project_id, [])):
+        subscribers = list(_subscribers.get(project_id, []))
+    # Fan out to all WS subscribers, on their own event loops.
+    for loop, q in subscribers:
         try:
-            q.put_nowait(event)
-        except asyncio.QueueFull:
-            pass
+            loop.call_soon_threadsafe(_offer, q, event)
+        except RuntimeError:
+            pass  # loop already closed; unsubscribe will clean up
+
+
+def _offer(q: asyncio.Queue, event: Dict) -> None:
+    try:
+        q.put_nowait(event)
+    except asyncio.QueueFull:
+        pass
 
 
 def snapshot(project_id: str) -> Optional[Dict]:
@@ -57,10 +68,14 @@ def history(project_id: str) -> List[Dict]:
 
 
 def subscribe(project_id: str) -> asyncio.Queue:
+    """Must be called from inside a running event loop (e.g. a WebSocket handler)."""
+    loop = asyncio.get_running_loop()
     q: asyncio.Queue = asyncio.Queue(maxsize=200)
-    _subscribers[project_id].append(q)
+    with _state_lock:
+        _subscribers[project_id].append((loop, q))
+        replay = list(_events[project_id])
     # Replay recent events.
-    for ev in list(_events[project_id]):
+    for ev in replay:
         try:
             q.put_nowait(ev)
         except asyncio.QueueFull:
@@ -69,5 +84,6 @@ def subscribe(project_id: str) -> asyncio.Queue:
 
 
 def unsubscribe(project_id: str, q: asyncio.Queue) -> None:
-    if q in _subscribers.get(project_id, []):
-        _subscribers[project_id].remove(q)
+    with _state_lock:
+        subs = _subscribers.get(project_id, [])
+        _subscribers[project_id] = [(lp, sq) for lp, sq in subs if sq is not q]

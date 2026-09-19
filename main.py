@@ -86,13 +86,18 @@ def cmd_providers(_args: argparse.Namespace) -> int:
     elif sd:
         img_line = f"Stable Diffusion WebUI ({os.getenv('SD_API_URL')})  [primary]"
     else:
-        img_line = "pollinations.ai (default)"
+        img_line = (f"pollinations.ai ({os.getenv('POLLINATIONS_MODEL', 'tongyi-mai/z-image-turbo')})"
+                    if os.getenv("POLLINATIONS_API_KEY") else
+                    "pollinations.ai legacy keyless endpoint (reduced quality — "
+                    "set POLLINATIONS_API_KEY)")
     if os.getenv("OPENAI_API_KEY"):
         img_line += "  +  OpenAI"
     print(f"  Image gen     : {img_line}")
-    print(f"  TTS           : gTTS (default)"
-          + ("  +  ElevenLabs" if eleven else "")
-          + "  +  pyttsx3 fallback")
+    print("  TTS           : edge-tts (default)  +  gTTS / pyttsx3 fallbacks"
+          + ("  +  ElevenLabs" if eleven else ""))
+    translate = "LLM" if llm.provider != "mock" else "MyMemory (free)"
+    print(f"  Subtitles     : translation via {translate}"
+          + ("  [MyMemory email set]" if os.getenv("MYMEMORY_EMAIL") else ""))
 
     if fal:
         t2v = "fal.ai (Stable Video Diffusion)"
