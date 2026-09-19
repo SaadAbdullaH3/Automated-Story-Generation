@@ -15,12 +15,11 @@ Two key upgrades over the basic ken-burns clip:
 """
 from __future__ import annotations
 import json
-import math
-import random
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 
 # Distinct motion patterns that look good on a still image.
@@ -48,6 +47,7 @@ class Shot:
     motion: str = "ken_burns_diag"
     audio_path: Optional[str] = None       # if set, gets muxed in (used for lip sync)
     is_lip_sync: bool = False              # if True, image_path is already a video
+    frames: int = 0                        # exact frame count; 0 = derive from duration_ms
 
 
 def probe_duration_ms(path: str | Path) -> Optional[int]:
@@ -64,21 +64,24 @@ def probe_duration_ms(path: str | Path) -> Optional[int]:
 
 def render_shot(shot: Shot, out_path: Path, width: int, height: int, fps: int,
                 add_grain: bool = True, add_vignette: bool = True) -> Path:
-    """Render a single shot (still image -> mp4) with cinematic motion."""
+    """Render a single shot (still image -> mp4) with cinematic motion.
+
+    The clip is exactly `shot.frames` frames long (or duration_ms at `fps`),
+    so shots line up with the audio timeline without drift.
+    """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if out_path.suffix.lower() != ".mp4":
         out_path = out_path.with_suffix(".mp4")
 
+    frames = shot.frames or max(1, int(round(shot.duration_ms * fps / 1000.0)))
+
     if shot.is_lip_sync and shot.image_path.lower().endswith((".mp4", ".mov", ".webm")):
-        # Already a video — just normalize size/format.
+        # Already a video — just normalize size/format/length.
         return _normalize_video(shot.image_path, out_path, width, height, fps,
-                                duration_ms=shot.duration_ms,
-                                audio_path=shot.audio_path,
+                                frames=frames, audio_path=shot.audio_path,
                                 add_grain=add_grain, add_vignette=add_vignette)
 
-    dur_s = max(0.5, shot.duration_ms / 1000.0)
-    frames = max(1, int(round(dur_s * fps)))
-    motion_filter = _motion_filter_for(shot.motion, frames, width, height)
+    motion_filter = _motion_filter_for(shot.motion, frames, width, height, fps)
 
     # Cinematic post-chain: subtle vignette + (static) grain + colour grading.
     # IMPORTANT: we use SPATIAL grain only (no `t` flag) — temporal grain
@@ -103,17 +106,18 @@ def render_shot(shot: Shot, out_path: Path, width: int, height: int, fps: int,
         f"{post_chain}"
     )
 
+    has_audio = bool(shot.audio_path and Path(shot.audio_path).exists())
     cmd = ["ffmpeg", "-y", "-loop", "1", "-i", str(shot.image_path)]
-    if shot.audio_path and Path(shot.audio_path).exists():
+    if has_audio:
         cmd += ["-i", str(shot.audio_path)]
     cmd += [
         "-vf", vf,
-        "-t", f"{dur_s:.3f}",
+        "-frames:v", str(frames),
         "-r", str(fps),
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
         "-pix_fmt", "yuv420p",
     ]
-    if shot.audio_path and Path(shot.audio_path).exists():
+    if has_audio:
         cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
     else:
         cmd += ["-an"]
@@ -123,23 +127,27 @@ def render_shot(shot: Shot, out_path: Path, width: int, height: int, fps: int,
 
 
 def assemble_scene(shots: List[Path], out_path: Path,
-                   crossfade_ms: int = 250,
-                   audio_path: Optional[str] = None) -> Path:
-    """Concatenate the sub-clips of a scene with crossfades and (optional) audio."""
+                   crossfade_ms: float = 250,
+                   audio_path: Optional[str] = None,
+                   durations_s: Optional[List[float]] = None) -> Path:
+    """Concatenate the sub-clips of a scene with crossfades and (optional) audio.
+
+    Pass `durations_s` (the exact clip lengths) to place crossfades precisely;
+    otherwise each clip is probed.
+    """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if out_path.suffix.lower() != ".mp4":
         out_path = out_path.with_suffix(".mp4")
 
-    if len(shots) == 1:
-        # Single shot — just normalize.
-        return _normalize_video(str(shots[0]), out_path,
-                                duration_ms=probe_duration_ms(shots[0]) or 3000,
-                                audio_path=audio_path, add_grain=False,
-                                add_vignette=False, width=0, height=0, fps=24)
+    if len(shots) == 1 and not audio_path:
+        # Single shot — already in the project format, copy it as-is.
+        if Path(shots[0]).resolve() != out_path.resolve():
+            shutil.copyfile(shots[0], out_path)
+        return out_path
 
-    # Probe per-clip durations so we can compute xfade offsets.
-    durs = [probe_duration_ms(s) or 1000 for s in shots]
-    xfade_s = max(0.05, crossfade_ms / 1000.0)
+    if durations_s is None:
+        durations_s = [(probe_duration_ms(s) or 1000) / 1000.0 for s in shots]
+    xfade_s = max(0.04, crossfade_ms / 1000.0)
 
     inputs: List[str] = []
     for s in shots:
@@ -147,18 +155,22 @@ def assemble_scene(shots: List[Path], out_path: Path,
     if audio_path and Path(audio_path).exists():
         inputs += ["-i", str(audio_path)]
 
-    filter_parts = []
-    prev = "0:v"
-    offset = 0.0
-    for i in range(1, len(shots)):
-        offset += (durs[i - 1] / 1000.0) - xfade_s
-        out_label = f"v{i}"
-        filter_parts.append(
-            f"[{prev}][{i}:v]xfade=transition=fade:duration={xfade_s:.2f}:"
-            f"offset={max(0,offset):.3f}[{out_label}]"
-        )
-        prev = out_label
-    fc = ";".join(filter_parts)
+    if len(shots) == 1:
+        fc = "[0:v]null[v0]"
+        prev = "v0"
+    else:
+        filter_parts = []
+        prev = "0:v"
+        offset = 0.0
+        for i in range(1, len(shots)):
+            offset += durations_s[i - 1] - xfade_s
+            out_label = f"v{i}"
+            filter_parts.append(
+                f"[{prev}][{i}:v]xfade=transition=fade:duration={xfade_s:.6f}:"
+                f"offset={max(0.0, offset):.6f}[{out_label}]"
+            )
+            prev = out_label
+        fc = ";".join(filter_parts)
 
     cmd = ["ffmpeg", "-y", *inputs, "-filter_complex", fc,
            "-map", f"[{prev}]"]
@@ -174,67 +186,69 @@ def assemble_scene(shots: List[Path], out_path: Path,
 
 # ---- internals --------------------------------------------------------------
 
-def _motion_filter_for(motion: str, frames: int, w: int, h: int) -> str:
-    """Return a `zoompan=...` filter string for the requested motion."""
+def _motion_filter_for(motion: str, frames: int, w: int, h: int, fps: int = 24) -> str:
+    """Return a `zoompan=...` filter string for the requested motion.
+
+    `fps` is passed to zoompan so it emits frames at the project rate
+    (its default is 25, which would then be resampled and judder).
+    """
     f = max(1, frames)
-    sw, sh = w, h
+    tail = f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={w}x{h}:fps={fps}"
     # All motions are CENTERED zoom only — no pans, no diagonal drift.
     # We keep zoom rates very low (≤ 0.0005 per frame) so any residual
     # pixel-rounding is invisible to the eye.
     if motion == "very_slow_zoom_in":
         # Barely-perceptible zoom: 1.00 -> ~1.06 over the whole shot.
-        return (f"zoompan=z='min(zoom+0.0003,1.10)':d={f}:"
-                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={sw}x{sh}")
+        return f"zoompan=z='min(zoom+0.0003,1.10)':d={f}:{tail}"
     if motion == "slow_zoom_in":
-        return (f"zoompan=z='min(zoom+0.0005,1.18)':d={f}:"
-                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={sw}x{sh}")
+        return f"zoompan=z='min(zoom+0.0005,1.18)':d={f}:{tail}"
     if motion == "slow_zoom_out":
-        return (f"zoompan=z='if(eq(on,0),1.18,max(zoom-0.0005,1.0))':d={f}:"
-                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={sw}x{sh}")
+        return f"zoompan=z='if(eq(on,0),1.18,max(zoom-0.0005,1.0))':d={f}:{tail}"
     if motion in ("static_hold", "static_breathing",
                   "pan_left_subtle", "pan_right_subtle",
                   "ken_burns_diag", "ken_burns_diag_rev"):
         # Pan / ken-burns presets now collapse to a stable centered hold.
-        return (f"zoompan=z=1.10:d={f}:"
-                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={sw}x{sh}")
+        return f"zoompan=z=1.10:d={f}:{tail}"
     # default — gentle centered zoom in.
-    return (f"zoompan=z='min(zoom+0.0003,1.10)':d={f}:"
-            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={sw}x{sh}")
+    return f"zoompan=z='min(zoom+0.0003,1.10)':d={f}:{tail}"
 
 
 def _normalize_video(in_path: str, out_path: Path, width: int, height: int,
-                     fps: int, duration_ms: int,
+                     fps: int, frames: int,
                      audio_path: Optional[str] = None,
                      add_grain: bool = False, add_vignette: bool = False) -> Path:
-    """Re-encode an existing video clip to the project's pixel format / size."""
-    dur_s = max(0.5, duration_ms / 1000.0)
+    """Re-encode an existing clip to the project's size / fps / exact length.
+
+    Clips shorter than `frames` are extended by holding their last frame, so a
+    provider clip (e.g. lip-sync) always fills its slot on the timeline.
+    """
     vf_parts = []
     if width and height:
         vf_parts.append(
             f"scale={width}:{height}:force_original_aspect_ratio=increase,"
             f"crop={width}:{height}"
         )
+    if fps:
+        vf_parts.append(f"fps={fps}")
     if add_vignette:
         vf_parts.append("vignette=PI/5")
     if add_grain:
-        vf_parts.append("noise=alls=4:allf=t+u")
+        vf_parts.append("noise=alls=2:allf=u")
+    vf_parts.append(f"tpad=stop_mode=clone:stop_duration={frames / max(1, fps):.3f}")
     vf_parts.append("format=yuv420p")
-    if fps:
-        vf_parts.append(f"fps={fps}")
     vf = ",".join(vf_parts)
 
+    has_audio = bool(audio_path and Path(audio_path).exists())
     cmd = ["ffmpeg", "-y", "-i", str(in_path)]
-    if audio_path and Path(audio_path).exists():
+    if has_audio:
         cmd += ["-i", str(audio_path)]
-    cmd += ["-vf", vf, "-t", f"{dur_s:.3f}",
+    cmd += ["-vf", vf, "-frames:v", str(frames),
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
             "-pix_fmt", "yuv420p"]
-    if audio_path and Path(audio_path).exists():
-        cmd += ["-map", "0:v:0", "-map", "1:a:0",
-                "-c:a", "aac", "-b:a", "192k", "-shortest"]
+    if has_audio:
+        cmd += ["-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "192k"]
     else:
-        cmd += ["-c:a", "copy" if _has_audio(in_path) else "aac",
-                "-shortest"]
+        cmd += ["-an"]
     cmd.append(str(out_path))
     subprocess.run(cmd, check=True, capture_output=True)
     return out_path

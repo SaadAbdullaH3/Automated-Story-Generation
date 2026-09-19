@@ -16,14 +16,19 @@ class CompositorTool(BaseTool):
 
     def run(self, clips: List[str], out_path: str,
             audio_path: Optional[str] = None,
-            transition: str = "fade", transition_ms: int = 400,
+            transition: str = "fade", transition_ms: float = 400,
+            durations_s: Optional[List[float]] = None,
             **_) -> ToolResult:
+        """`durations_s`, when given, are the exact clip lengths used to place
+        crossfades (otherwise each clip is probed)."""
         out = Path(out_path)
         out.parent.mkdir(parents=True, exist_ok=True)
         if out.suffix.lower() != ".mp4":
             out = out.with_suffix(".mp4")
 
-        clips = [c for c in clips if Path(c).exists()]
+        missing = [c for c in clips if not Path(c).exists()]
+        if missing:
+            return ToolResult(success=False, error=f"missing input clips: {missing}")
         if not clips:
             return ToolResult(success=False, error="no input clips found")
 
@@ -34,7 +39,8 @@ class CompositorTool(BaseTool):
 
         # Crossfade chain.
         try:
-            self._xfade_chain(clips, out, audio_path, transition_ms / 1000.0)
+            self._xfade_chain(clips, out, audio_path, transition_ms / 1000.0,
+                              durations_s=durations_s)
             return ToolResult(success=True, data=str(out),
                               metadata={"clip_count": len(clips), "transition": transition})
         except subprocess.CalledProcessError as e:
@@ -73,17 +79,20 @@ class CompositorTool(BaseTool):
         list_path.unlink(missing_ok=True)
 
     def _xfade_chain(self, clips: List[str], out: Path,
-                     audio: Optional[str], xfade_s: float) -> None:
-        # Probe each clip's duration.
-        durations: List[float] = []
-        for c in clips:
-            r = subprocess.run(
-                ["ffprobe", "-v", "error", "-select_streams", "v:0",
-                 "-show_entries", "format=duration",
-                 "-of", "default=noprint_wrappers=1:nokey=1", str(c)],
-                check=True, capture_output=True, text=True,
-            )
-            durations.append(float(r.stdout.strip() or "0"))
+                     audio: Optional[str], xfade_s: float,
+                     durations_s: Optional[List[float]] = None) -> None:
+        durations: List[float] = list(durations_s or [])
+        if len(durations) != len(clips):
+            # Probe each clip's duration.
+            durations = []
+            for c in clips:
+                r = subprocess.run(
+                    ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                     "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", str(c)],
+                    check=True, capture_output=True, text=True,
+                )
+                durations.append(float(r.stdout.strip() or "0"))
 
         # Build xfade graph.
         inputs: List[str] = []
@@ -97,7 +106,7 @@ class CompositorTool(BaseTool):
             out_label = f"v{i}"
             filter_parts.append(
                 f"[{prev_label}][{i}:v]xfade=transition=fade:"
-                f"duration={xfade_s:.2f}:offset={max(0,offset):.2f}[{out_label}]"
+                f"duration={xfade_s:.6f}:offset={max(0.0, offset):.6f}[{out_label}]"
             )
             prev_label = out_label
         filter_complex = ";".join(filter_parts)

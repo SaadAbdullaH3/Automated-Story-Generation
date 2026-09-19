@@ -1,35 +1,45 @@
-"""Phase 3 agent: ScriptOutput + AudioOutput -> final_output.mp4 (cinematic).
+"""Phase 3 agent: ScriptOutput + AudioOutput -> final MP4 (cinematic, in sync).
 
-Two-tier rendering:
+Two stages:
 
-1. **Default (no API key required) — multi-shot ffmpeg composition.**
-   - One establishing image per scene.
-   - One portrait image per character (generated once, cached).
-   - For each dialogue line, render a sub-clip whose duration matches the
-     audio segment, using the appropriate shot (narrator -> establishing,
-     character -> their portrait), with cinematic ken-burns motion.
-   - Within a scene, sub-clips are crossfaded together; between scenes,
-     a longer crossfade.
-   - Optional vignette + film-grain post for cinematic feel.
+1. **Assets** (`run`): one portrait per character and a 3-image shot bank per
+   scene (wide / detail / alt), plus an optional real-motion clip for the
+   establishing shot when a text/image-to-video provider is configured.
 
-2. **Optional upgrades when keys are configured.**
-   - `FAL_KEY` / `REPLICATE_API_TOKEN` -> real text-to-video for
-     establishing shots (Stable Video Diffusion / fast-SVD).
-   - Same keys -> real lip-sync (SadTalker / sync-lipsync) for character
-     dialogue lines, replacing the heuristic talking head.
+2. **Composition** (`compose`, also used by edits): every scene is cut to the
+   audio timeline from Phase 2 (shared/timeline.py):
+       pre-roll  -> establishing shot (or the real-motion clip)
+       each line -> narrator: rotate through the shot bank
+                    character: their portrait (B-roll cutaway on long lines),
+                    or a real lip-sync clip when a provider is configured
+   Shot boundaries are the timeline's boundaries rounded to frames, and every
+   clip is rendered with extra frames to cover its crossfade, so the final
+   video is exactly as long as the master audio and every cut lands on its
+   line. Scenes whose shot plan is unchanged are reused, not re-rendered.
+   Then scenes are crossfaded, the master audio is muxed, an optional speed
+   change is applied, and subtitle tracks are embedded.
 """
 from __future__ import annotations
+import hashlib
+import json
 import os
-import shutil
+import subprocess
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from mcp.tool_executor import ToolExecutor
 from shared.constants import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH, PHASE_VIDEO
-from shared.schemas.audio import AudioSegment
+from shared.languages import canonical
+from shared.schemas.audio import AudioSegment, SceneTiming
 from shared.schemas.pipeline import PipelineState
+from shared.schemas.story import Character, Scene
 from shared.schemas.video import CharacterPortrait, SceneFrame, Shot, VideoOutput
+from shared.timeline import (
+    SCENE_XFADE_MS, SHOT_XFADE_MS, build_timeline, span_frames, split_span,
+    xfade_frames,
+)
 from shared.utils.files import project_dir, write_json
 from shared.utils.logging import get_logger
 
@@ -38,6 +48,40 @@ from .animator import (
 )
 
 log = get_logger("video_agent")
+
+MAX_SHOT_MS = 4500   # longest a single still stays on screen before a cut
+MIN_SHOT_MS = 1500   # shortest cut we'll create when splitting a long span
+
+ANIME_STYLE = ("anime, studio ghibli style, cel-shaded, vibrant saturated colors, "
+               "clean detailed line art, soft cinematic lighting")
+SCENE_STYLE = ANIME_STYLE + ", painterly background, masterpiece, high quality, ultra detailed"
+PORTRAIT_STYLE = ANIME_STYLE + ", masterpiece, high quality"
+SCENE_NEGATIVE = ("blurry, low quality, jpeg artifacts, photograph, photorealistic, "
+                  "3d render, text, watermark, signature, deformed")
+PORTRAIT_NEGATIVE = ("blurry, low quality, jpeg artifacts, deformed, extra limbs, mutated, "
+                     "ugly, photograph, photorealistic, 3d render, text, watermark, signature")
+
+# Three deliberately different framings of the same scene so cuts feel meaningful.
+BANK_FRAMINGS = [
+    ("wide",   "wide establishing shot, full landscape, expansive composition"),
+    ("detail", "extreme close-up detail, macro, intricate texture, shallow depth of field"),
+    ("alt",    "alternate angle, low-angle hero shot, dramatic perspective, dynamic framing"),
+]
+
+
+@dataclass
+class PlannedShot:
+    shot_id: str
+    kind: str                     # establishing | character | lip_sync
+    source: str                   # image path, or video path when is_video
+    start_ms: int
+    end_ms: int
+    nominal_frames: int
+    render_frames: int
+    motion: str
+    character_id: Optional[str] = None
+    audio_path: Optional[str] = None
+    is_video: bool = False
 
 
 class VideoAgent:
@@ -73,490 +117,100 @@ class VideoAgent:
             )
 
         try:
-            # 1. Per-character portraits (used as talking-head shots).
-            portraits = self._generate_portraits(state, width, height)
+            portraits = [self.generate_portrait(state.project_id, c, width, height)
+                         for c in state.script.characters.characters]
+            frames = [self._generate_scene_frame(state.project_id, scene, width, height,
+                                                 fps, use_text_to_video)
+                      for scene in state.script.scenes]
 
-            # 2. Per-scene establishing image (and optional T2V clip).
-            scene_assets = self._generate_scene_assets(
-                state, width, height, fps, use_text_to_video,
-            )
-
-            # 3. Per-scene multi-shot composition driven by dialogue timing.
-            frames = self._compose_scenes(
-                state, scene_assets, portraits, width, height, fps,
-                use_lip_sync=use_lip_sync, cinematic_post=cinematic_post,
-            )
-
-            # 4. Final crossfade compositor across scenes + master audio.
-            final_video = self._compose_final(state, frames, with_subtitles,
-                                              subtitle_language, width, height, fps)
-
-            output = VideoOutput(
+            lang = canonical(subtitle_language)
+            if subtitle_language and not lang:
+                log.warning("subtitle language %r is not supported — using English",
+                            subtitle_language)
+            state.video = VideoOutput(
                 project_id=state.project_id,
                 frames=frames,
-                final_video_path=str(final_video),
+                final_video_path="",
                 width=width, height=height, fps=fps,
                 has_subtitles=with_subtitles,
-                duration_ms=sum(f.duration_ms for f in frames),
-                portraits=list(portraits.values()),
+                portraits=portraits,
                 used_text_to_video=use_text_to_video,
                 used_lip_sync=use_lip_sync,
+                cinematic_post=cinematic_post,
+                subtitle_language=lang or "English",
             )
-            artifacts = self._serialize(state.project_id, output)
-            state.video = output
+            final_video = self.compose(state)
+
             state.phase3.status = "complete"
             state.phase3.finished_at = datetime.utcnow().isoformat()
-            state.phase3.artifact_paths = artifacts
+            state.phase3.artifact_paths = self.serialize(state)
             log.info("phase 3 complete (%d scenes, %d shots total, video=%s)",
-                     len(frames), sum(len(f.shots) for f in frames), final_video)
-            return output
+                     len(frames), sum(len(f.shots) for f in state.video.frames), final_video)
+            return state.video
         except Exception as e:  # noqa: BLE001
             state.phase3.status = "failed"
             state.phase3.error = f"{type(e).__name__}: {e}"
             log.exception("phase 3 failed")
             raise
 
-    # ---- step 1: character portraits ------------------------------------
+    def compose(self, state: PipelineState, force: bool = False) -> str:
+        """Cut every scene to the current timeline and build the final film.
 
-    def _generate_portraits(self, state: PipelineState, width: int, height: int
-                            ) -> Dict[str, CharacterPortrait]:
-        proj = project_dir(state.project_id)
-        port_dir = proj / "video" / "portraits"
-        port_dir.mkdir(parents=True, exist_ok=True)
-        portraits: Dict[str, CharacterPortrait] = {}
-        for c in state.script.characters.characters:
-            out = port_dir / f"{c.id}.png"
-            # Anime / cartoon style — cel-shaded, vibrant, Studio Ghibli inspired.
-            prompt = (
-                f"anime style close-up portrait of {c.name}, {c.visual_description}, "
-                f"{c.role}, expressive face, large detailed eyes, looking at camera, "
-                f"vibrant colors, cel-shaded, clean line art, soft anime lighting"
-            )
-            self.tools.execute(
-                "vision.generate_image",
-                prompt=prompt,
-                out_path=str(out),
-                width=width, height=height,
-                style=("anime, studio ghibli style, cel-shaded, "
-                       "vibrant saturated colors, clean detailed line art, "
-                       "soft cinematic lighting, masterpiece, high quality"),
-                negative_prompt=("blurry, low quality, jpeg artifacts, deformed, "
-                                 "extra limbs, mutated, ugly, photograph, photorealistic, "
-                                 "3d render, text, watermark, signature"),
-            )
-            portraits[c.id] = CharacterPortrait(
-                character_id=c.id,
-                image_path=str(out),
-            )
-            log.info("  portrait: %s -> %s", c.name, out.name)
-        return portraits
-
-    # ---- step 2: scene establishing assets ------------------------------
-
-    def _generate_scene_assets(self, state: PipelineState,
-                               width: int, height: int, fps: int,
-                               use_text_to_video: bool) -> Dict[str, dict]:
-        """Generate a 'shot bank' for each scene: 1 wide + 2 B-roll variations.
-
-        We rotate between these images while a single scene's audio plays so
-        the viewer never sees one frame on screen for more than ~4 seconds.
+        Reuses a scene's existing clip when its shot plan and source images are
+        unchanged (unless `force`). Returns the final video path.
         """
-        proj = project_dir(state.project_id)
-        img_dir = proj / "video" / "frames"
-        clip_dir = proj / "video" / "clips"
-        t2v_dir = proj / "video" / "t2v"
-        for d in (img_dir, clip_dir, t2v_dir):
-            d.mkdir(parents=True, exist_ok=True)
-
-        # Per-scene shot-bank prompt suffixes — three deliberately different
-        # framings of the same scene so cuts feel meaningful, not random.
-        broll_styles = [
-            ("wide",   "wide establishing shot, full landscape, expansive composition"),
-            ("detail", "extreme close-up detail, macro, intricate texture, shallow depth of field"),
-            ("alt",    "alternate angle, low-angle hero shot, dramatic perspective, dynamic framing"),
-        ]
-
-        assets: Dict[str, dict] = {}
-        for scene in state.script.scenes:
-            shot_bank: List[str] = []
-            for tag, suffix in broll_styles:
-                out_path = img_dir / f"{scene.scene_id}_{tag}.png"
-                self.tools.execute(
-                    "vision.generate_image",
-                    prompt=f"anime scene of {scene.visual_prompt}, {suffix}",
-                    out_path=str(out_path),
-                    width=width, height=height,
-                    style=("anime, studio ghibli style, cel-shaded, "
-                           "vibrant saturated colors, clean detailed line art, "
-                           "soft cinematic lighting, painterly background, "
-                           "masterpiece, high quality, ultra detailed"),
-                    negative_prompt=("blurry, low quality, jpeg artifacts, "
-                                     "photograph, photorealistic, 3d render, "
-                                     "text, watermark, signature, deformed"),
-                )
-                shot_bank.append(str(out_path))
-                log.info("  scene %s %s shot -> %s", scene.scene_id, tag, out_path.name)
-
-            entry = {"image": shot_bank[0], "shot_bank": shot_bank, "t2v": None}
-
-            if use_text_to_video:
-                t2v_out = t2v_dir / f"{scene.scene_id}.mp4"
-                # Image-to-video — pass the wide establishing still we just
-                # generated to give the model a strong visual anchor.
-                res = self.tools.execute(
-                    "vision.text_to_video",
-                    prompt=scene.visual_prompt,
-                    image_path=shot_bank[0],
-                    out_path=str(t2v_out),
-                    duration_s=min(4.0, scene.duration_ms / 1000.0),
-                    width=width, height=height, fps=fps,
-                )
-                if res.success:
-                    entry["t2v"] = res.data
-                    log.info("  scene %s: t2v clip generated (%s)",
-                             scene.scene_id, res.metadata.get("provider"))
-                else:
-                    log.info("  scene %s: t2v unavailable (%s) — using still",
-                             scene.scene_id, res.error)
-            assets[scene.scene_id] = entry
-        return assets
-
-    # ---- step 3: multi-shot scene composition ---------------------------
-
-    def _compose_scenes(self, state: PipelineState, scene_assets: Dict[str, dict],
-                        portraits: Dict[str, CharacterPortrait],
-                        width: int, height: int, fps: int,
-                        use_lip_sync: bool, cinematic_post: bool) -> List[SceneFrame]:
-        proj = project_dir(state.project_id)
-        shot_dir = proj / "video" / "shots"
-        scene_dir = proj / "video" / "scenes"
-        shot_dir.mkdir(parents=True, exist_ok=True)
-        scene_dir.mkdir(parents=True, exist_ok=True)
-
-        # Build a scene_id -> [audio segments] map.
-        seg_by_scene: Dict[str, List[AudioSegment]] = {}
+        video = state.video
+        timings = self._scene_timings(state)
+        scene_by_id = {s.scene_id: s for s in state.script.scenes}
+        segs_by_scene: Dict[str, List[AudioSegment]] = {}
         if state.audio:
             for seg in state.audio.manifest.segments:
                 if seg.kind == "dialogue":
-                    seg_by_scene.setdefault(seg.scene_id, []).append(seg)
+                    segs_by_scene.setdefault(seg.scene_id, []).append(seg)
 
-        # Maximum on-screen duration for any single image before we force a
-        # cut. Keeping this ≤ 5 s prevents the "static-frame" feeling.
-        MAX_SHOT_MS = 4500
-        MIN_SHOT_MS = 1500
-
-        frames: List[SceneFrame] = []
-        for scene in state.script.scenes:
-            asset = scene_assets[scene.scene_id]
-            shot_bank: List[str] = asset.get("shot_bank") or [asset["image"]]
-            establishing_video = asset["t2v"]
-
-            scene_segments = seg_by_scene.get(scene.scene_id, [])
-            shots: List[Shot] = []
-            rendered_paths: List[Path] = []
-
-            # ---- helper: split a (src_image, total_ms) into multiple cuts -----
-            def emit_split_shots(src_images: List[str], total_ms: int,
-                                 base_id: str, kind: str,
-                                 char_id: Optional[str],
-                                 audio_path: Optional[str] = None) -> None:
-                """Render `total_ms` of footage as N consecutive sub-clips,
-                cycling through src_images so no single image plays > MAX_SHOT_MS."""
-                if total_ms <= MAX_SHOT_MS or len(src_images) <= 1:
-                    # Single shot is fine.
-                    motion = pick_motion_for_index(scene.index, len(shots))
-                    rs = RenderShot(image_path=src_images[0],
-                                    duration_ms=total_ms, motion=motion)
-                    out_path = shot_dir / f"{base_id}.mp4"
-                    rendered = render_shot(
-                        rs, out_path, width, height, fps,
-                        add_grain=cinematic_post, add_vignette=cinematic_post,
-                    )
-                    rendered_paths.append(rendered)
-                    shots.append(Shot(
-                        shot_id=base_id, scene_id=scene.scene_id, kind=kind,
-                        character_id=char_id, image_path=src_images[0],
-                        clip_path=str(rendered),
-                        duration_ms=total_ms, motion=motion,
-                        audio_path=audio_path,
-                    ))
-                    return
-
-                # Compute how many cuts we need.
-                n_cuts = max(2, (total_ms + MAX_SHOT_MS - 1) // MAX_SHOT_MS)
-                per = max(MIN_SHOT_MS, total_ms // n_cuts)
-                remainder = total_ms - per * (n_cuts - 1)
-                durations = [per] * (n_cuts - 1) + [remainder]
-                for j, dur_ms in enumerate(durations):
-                    img = src_images[j % len(src_images)]
-                    motion = pick_motion_for_index(scene.index, len(shots))
-                    sub_id = f"{base_id}_p{j+1}"
-                    out_path = shot_dir / f"{sub_id}.mp4"
-                    rs = RenderShot(image_path=img, duration_ms=dur_ms, motion=motion)
-                    rendered = render_shot(
-                        rs, out_path, width, height, fps,
-                        add_grain=cinematic_post, add_vignette=cinematic_post,
-                    )
-                    rendered_paths.append(rendered)
-                    shots.append(Shot(
-                        shot_id=sub_id, scene_id=scene.scene_id, kind=kind,
-                        character_id=char_id, image_path=img,
-                        clip_path=str(rendered),
-                        duration_ms=dur_ms, motion=motion,
-                        audio_path=audio_path if j == 0 else None,
-                    ))
-
-            # ---- 1. Establishing tail (no dialogue case or pre-roll) -------
-            if not scene_segments:
-                emit_split_shots(shot_bank, scene.duration_ms,
-                                 base_id=f"{scene.scene_id}_s",
-                                 kind="establishing", char_id=None)
+        rendered = reused = 0
+        last_index = len(video.frames) - 1
+        for i, frame in enumerate(video.frames):
+            timing = timings[frame.scene_id]
+            planned = self._plan_scene(state, scene_by_id[frame.scene_id], frame, timing,
+                                       segs_by_scene.get(frame.scene_id, []),
+                                       is_last_scene=(i == last_index))
+            signature = self._signature(planned, video)
+            clip_ok = frame.clip_path and Path(frame.clip_path).exists()
+            if not force and clip_ok and frame.plan_signature == signature:
+                reused += 1
             else:
-                # Brief establishing pre-roll (15-25% of scene).
-                est_ms = max(MIN_SHOT_MS, min(MAX_SHOT_MS,
-                                              int(scene.duration_ms * 0.18)))
-                emit_split_shots(shot_bank[:1], est_ms,
-                                 base_id=f"{scene.scene_id}_est",
-                                 kind="establishing", char_id=None)
+                frame.clip_path = str(self._render_scene(state, frame.scene_id, planned))
+                frame.plan_signature = signature
+                rendered += 1
+            frame.shots = [self._to_shot(frame.scene_id, p) for p in planned]
+            frame.start_ms = timing.start_ms
+            frame.duration_ms = timing.duration_ms
+        log.info("composition: %d scene(s) rendered, %d reused", rendered, reused)
 
-                # ---- 2. One (or more) sub-clip(s) per dialogue line --------
-                for i, seg in enumerate(scene_segments):
-                    char = next(
-                        (c for c in state.script.characters.characters
-                         if c.id == seg.character_id), None,
-                    )
-                    is_narrator = char is not None and char.role == "narrator"
-                    base_id = f"{scene.scene_id}_l{i+1}"
+        final = self._compose_final(state)
+        video.final_video_path = str(final)
+        video.duration_ms = int(round(sum(t.duration_ms for t in timings.values())
+                                      / video.speed_factor))
+        return str(final)
 
-                    if is_narrator:
-                        # Narrator: rotate through the entire shot bank so the
-                        # audience sees the world, not one frozen wide shot.
-                        src_images = shot_bank
-                        kind = "establishing"
-                        char_id = None
-                    else:
-                        portrait = portraits.get(seg.character_id)
-                        portrait_src = portrait.image_path if portrait else shot_bank[0]
-                        # For character lines: lead with portrait, optionally
-                        # cut to a B-roll reaction shot in the middle if line is long.
-                        if seg.duration_ms > MAX_SHOT_MS:
-                            # portrait → b-roll → portrait pattern
-                            src_images = [portrait_src, shot_bank[1 % len(shot_bank)],
-                                          portrait_src]
-                        else:
-                            src_images = [portrait_src]
-                        kind = "character"
-                        char_id = seg.character_id
-
-                    # Real lip-sync attempt (character lines only).
-                    if (use_lip_sync and not is_narrator
-                            and seg.file_path and Path(seg.file_path).exists()):
-                        ls_out = shot_dir / f"{base_id}.mp4"
-                        ls_res = self.tools.execute(
-                            "vision.lip_sync",
-                            image_path=src_images[0],
-                            audio_path=seg.file_path,
-                            out_path=str(ls_out),
-                            duration_s=seg.duration_ms / 1000.0,
-                            width=width, height=height, fps=fps,
-                        )
-                        if ls_res.success and ls_res.metadata.get("provider", "").startswith(("fal", "replicate")):
-                            rendered_paths.append(ls_out)
-                            shots.append(Shot(
-                                shot_id=base_id, scene_id=scene.scene_id,
-                                kind="lip_sync", character_id=char_id,
-                                image_path=src_images[0], clip_path=str(ls_out),
-                                duration_ms=seg.duration_ms, motion="lip_sync",
-                                audio_path=seg.file_path,
-                            ))
-                            continue
-
-                    # Default: split into multiple cuts if the line is long.
-                    emit_split_shots(src_images, seg.duration_ms,
-                                     base_id=base_id, kind=kind, char_id=char_id)
-
-            # Stitch the scene's sub-clips together with short crossfades.
-            scene_clip = scene_dir / f"{scene.scene_id}.mp4"
-            assemble_scene(
-                rendered_paths, scene_clip,
-                crossfade_ms=200, audio_path=None,  # audio is muxed at the final stage
-            )
-            frames.append(SceneFrame(
-                scene_id=scene.scene_id,
-                image_path=asset["image"],
-                clip_path=str(scene_clip),
-                width=width, height=height,
-                duration_ms=sum(s.duration_ms for s in shots),
-                motion="multi_shot",
-                transition_in=scene.transition_in,
-                shots=shots,
-            ))
-            log.info("  scene %s composed (%d shots)", scene.scene_id, len(shots))
-        return frames
-
-    # ---- step 4: final composition --------------------------------------
-
-    def _compose_final(self, state: PipelineState, frames: List[SceneFrame],
-                       with_subtitles: bool, subtitle_language: str,
-                       width: int, height: int, fps: int) -> Path:
+    def serialize(self, state: PipelineState) -> List[str]:
+        """Write video_summary.json; returns every Phase 3 artifact path."""
+        output = state.video
         proj = project_dir(state.project_id)
-        out = proj / "final_output.mp4"
-        clips = [f.clip_path for f in frames if f.clip_path]
-        master = state.audio.master_track if state.audio else None
-
-        compose = self.tools.execute(
-            "video.compose",
-            clips=clips, out_path=str(out),
-            audio_path=master,
-            transition="fade", transition_ms=400,
-        )
-        if not compose.success:
-            log.error("compose failed: %s", compose.error)
-            return out
-        if not with_subtitles or not state.audio:
-            return out
-
-        # Build English subtitle lines from the timing manifest.
-        en_lines: List[Dict[str, Any]] = []
-        for seg in state.audio.manifest.segments:
-            if seg.kind == "dialogue" and seg.text:
-                en_lines.append({
-                    "start_ms": seg.start_ms,
-                    "end_ms": seg.end_ms,
-                    "text": seg.text,
-                })
-        if not en_lines:
-            return out
-
-        # ---- Multi-language subtitle tracks --------------------------------
-        # We always offer these as switchable soft-sub tracks in the final MP4
-        # so the user can change language inside their video player.
-        target_langs = ["English", "French", "Spanish", "German", "Urdu"]
-        tracks: Dict[str, List[Dict[str, Any]]] = {"English": en_lines}
-        for lang in target_langs:
-            if lang == "English":
-                continue
-            translated = self._translate_lines(en_lines, lang)
-            if translated:
-                tracks[lang] = translated
-
-        # No burn-in: subtitles are exposed as switchable soft tracks only,
-        # so the player can change/disable language without two layers
-        # stacking on screen. The user's chosen `subtitle_language` becomes
-        # the default track players auto-select on open.
-        default_lang = subtitle_language if subtitle_language in tracks else "English"
-
-        multi_out = proj / "final_output_multilang.mp4"
-        multi_res = self.tools.execute(
-            "video.multi_subtitle",
-            in_path=str(out), out_path=str(multi_out),
-            tracks=tracks, default_language=default_lang,
-        )
-        if multi_res.success:
-            log.info("embedded %d soft-sub tracks (%s); default=%s",
-                     multi_res.metadata.get("track_count"),
-                     ", ".join(multi_res.metadata.get("languages", [])),
-                     default_lang)
-            return multi_out
-        log.warning("multi-language sub embed failed: %s — returning unsubbed video",
-                    multi_res.error)
-        return out
-
-    # Mapping for free Google Translate fallback (deep-translator codes).
-    _GT_CODES = {
-        "english": "en", "french": "fr", "spanish": "es",
-        "german": "de", "urdu": "ur", "arabic": "ar", "hindi": "hi",
-        "chinese": "zh-CN", "japanese": "ja", "korean": "ko",
-        "russian": "ru", "italian": "it", "portuguese": "pt",
-    }
-
-    def _translate_lines(self, lines: List[Dict[str, Any]], language: str
-                         ) -> Optional[List[Dict[str, Any]]]:
-        """Translate subtitle line texts to the target language.
-
-        Strategy:
-          1. Try the LLM with a `||`-delimited batch prompt.
-          2. If the LLM is mock / returns wrong chunk count / errors, fall
-             back to free Google Translate via `deep-translator` (no API
-             key required, line-by-line).
-
-        Returns the translated line list (timing preserved 1:1) or None if
-        every path fails — caller will then skip that subtitle track.
-        """
-        if not lines:
-            return None
-        log.info("translating %d subtitle lines to %s...", len(lines), language)
-
-        # ---- attempt 1: LLM batch translation -----------------------------
-        try:
-            combined = "\n||\n".join(ln["text"] for ln in lines)
-            prompt = (
-                f"Translate the following subtitle lines to {language}. "
-                f"Return EXACTLY the same number of lines, separated by the "
-                f"'||' delimiter on its own line. Preserve tone and brevity. "
-                f"Do not add commentary, numbering, or quotes.\n\n{combined}"
-            )
-            res = self.tools.execute("llm.text_generate", prompt=prompt)
-            if res.success:
-                chunks = [c.strip() for c in res.data.split("||")]
-                chunks = [c for c in chunks if c]
-                if len(chunks) == len(lines):
-                    return [
-                        {"start_ms": s["start_ms"], "end_ms": s["end_ms"], "text": t}
-                        for s, t in zip(lines, chunks)
-                    ]
-                log.info("LLM translation to %s gave %d chunks (need %d) — "
-                         "falling back to Google Translate",
-                         language, len(chunks), len(lines))
-            else:
-                log.info("LLM translation to %s unavailable (%s) — using Google Translate",
-                         language, res.error)
-        except Exception as e:  # noqa: BLE001
-            log.info("LLM translation to %s errored (%s) — using Google Translate",
-                     language, e)
-
-        # ---- attempt 2: deep-translator (free Google Translate) ----------
-        code = self._GT_CODES.get(language.lower())
-        if not code:
-            log.warning("no Google Translate code for %s — skipping", language)
-            return None
-        try:
-            from deep_translator import GoogleTranslator
-            gt = GoogleTranslator(source="en", target=code)
-            translated_texts = []
-            for ln in lines:
-                src_text = ln["text"].strip()
-                try:
-                    translated_texts.append(gt.translate(src_text) or src_text)
-                except Exception as e:  # noqa: BLE001
-                    log.warning("Google Translate line failed for %s (%s) — using English",
-                                language, e)
-                    translated_texts.append(src_text)
-            log.info("Google Translate to %s succeeded (%d lines)",
-                     language, len(translated_texts))
-            return [
-                {"start_ms": s["start_ms"], "end_ms": s["end_ms"], "text": t}
-                for s, t in zip(lines, translated_texts)
-            ]
-        except Exception as e:  # noqa: BLE001
-            log.warning("Google Translate fallback for %s failed: %s", language, e)
-            return None
-
-    # ---- serialization ---------------------------------------------------
-
-    def _serialize(self, project_id: str, output: VideoOutput) -> List[str]:
-        proj = project_dir(project_id)
         summary = proj / "video_summary.json"
         write_json(summary, {
-            "project_id": project_id,
+            "project_id": state.project_id,
             "phase": PHASE_VIDEO,
             "status": "complete",
             "final_video": output.final_video_path,
             "frame_count": len(output.frames),
             "shot_count": sum(len(f.shots) for f in output.frames),
             "has_subtitles": output.has_subtitles,
+            "subtitle_languages": output.subtitle_languages,
             "used_text_to_video": output.used_text_to_video,
             "used_lip_sync": output.used_lip_sync,
+            "speed_factor": output.speed_factor,
             "width": output.width, "height": output.height, "fps": output.fps,
             "duration_ms": output.duration_ms,
             "frames": [f.model_dump(mode="json") for f in output.frames],
@@ -565,13 +219,370 @@ class VideoAgent:
         artifacts: List[str] = [str(summary), output.final_video_path]
         for f in output.frames:
             artifacts.append(f.image_path)
-            if f.clip_path:
-                artifacts.append(f.clip_path)
-            for s in f.shots:
-                if s.clip_path:
-                    artifacts.append(s.clip_path)
+            artifacts.extend(f.shot_bank)
+            artifacts.extend(f.portrait_overrides.values())
+            for extra in (f.clip_path, f.t2v_clip):
+                if extra:
+                    artifacts.append(extra)
+            artifacts.extend(s.clip_path for s in f.shots if s.clip_path)
         for p in output.portraits:
             artifacts.append(p.image_path)
             if p.talking_head_clip:
                 artifacts.append(p.talking_head_clip)
-        return artifacts
+        seen = set()
+        state.phase3.artifact_paths = [a for a in artifacts
+                                       if a and not (a in seen or seen.add(a))]
+        return state.phase3.artifact_paths
+
+    # ---- assets ----------------------------------------------------------
+
+    def generate_portrait(self, project_id: str, c: Character, width: int, height: int,
+                          seed_salt: str = "") -> CharacterPortrait:
+        """(Re)generate one character's close-up portrait."""
+        out = project_dir(project_id) / "video" / "portraits" / f"{c.id}.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        prompt = (
+            f"anime style close-up portrait of {c.name}, {c.visual_description}, "
+            f"{c.role}, expressive face, large detailed eyes, looking at camera, "
+            f"vibrant colors, cel-shaded, clean line art, soft anime lighting"
+        )
+        res = self.tools.execute(
+            "vision.generate_image", prompt=prompt, out_path=str(out),
+            width=width, height=height, style=PORTRAIT_STYLE,
+            negative_prompt=PORTRAIT_NEGATIVE, seed=_seed(prompt, seed_salt),
+        )
+        log.info("  portrait: %s -> %s (%s)", c.name, out.name,
+                 res.metadata.get("provider") if res.success else res.error)
+        return CharacterPortrait(character_id=c.id, image_path=res.data if res.success else str(out))
+
+    def generate_shot_bank(self, project_id: str, scene: Scene, width: int, height: int,
+                           seed_salt: str = "") -> List[str]:
+        """(Re)generate a scene's wide / detail / alt images. Returns their paths."""
+        img_dir = project_dir(project_id) / "video" / "frames"
+        img_dir.mkdir(parents=True, exist_ok=True)
+        bank: List[str] = []
+        for tag, suffix in BANK_FRAMINGS:
+            out = img_dir / f"{scene.scene_id}_{tag}.png"
+            prompt = f"anime scene of {scene.visual_prompt}, {suffix}"
+            res = self.tools.execute(
+                "vision.generate_image", prompt=prompt, out_path=str(out),
+                width=width, height=height, style=SCENE_STYLE,
+                negative_prompt=SCENE_NEGATIVE, seed=_seed(prompt, seed_salt),
+            )
+            bank.append(res.data if res.success else str(out))
+            log.info("  scene %s %s shot -> %s (%s)", scene.scene_id, tag, out.name,
+                     res.metadata.get("provider") if res.success else res.error)
+        return bank
+
+    def _generate_scene_frame(self, project_id: str, scene: Scene, width: int, height: int,
+                              fps: int, use_text_to_video: bool) -> SceneFrame:
+        bank = self.generate_shot_bank(project_id, scene, width, height)
+        t2v_clip = None
+        if use_text_to_video:
+            t2v_out = project_dir(project_id) / "video" / "t2v" / f"{scene.scene_id}.mp4"
+            t2v_out.parent.mkdir(parents=True, exist_ok=True)
+            # Image-to-video — the wide still gives the model a strong visual anchor.
+            res = self.tools.execute(
+                "vision.text_to_video", prompt=scene.visual_prompt, image_path=bank[0],
+                out_path=str(t2v_out), duration_s=4.0, width=width, height=height, fps=fps,
+            )
+            if res.success:
+                t2v_clip = res.data
+                log.info("  scene %s: t2v clip generated (%s)", scene.scene_id,
+                         res.metadata.get("provider"))
+            else:
+                log.info("  scene %s: t2v unavailable (%s) — using still",
+                         scene.scene_id, res.error)
+        return SceneFrame(scene_id=scene.scene_id, image_path=bank[0], shot_bank=bank,
+                          width=width, height=height, duration_ms=scene.duration_ms,
+                          transition_in=scene.transition_in, t2v_clip=t2v_clip)
+
+    # ---- shot planning ---------------------------------------------------
+
+    def _scene_timings(self, state: PipelineState) -> Dict[str, SceneTiming]:
+        if state.audio and state.audio.manifest.scenes:
+            return {t.scene_id: t for t in state.audio.manifest.scenes}
+        # No audio timeline (e.g. video-only runs): scenes play their script length.
+        slots, _, _ = build_timeline([(s.scene_id, [], s.duration_ms)
+                                      for s in state.script.scenes])
+        return {s.scene_id: SceneTiming(scene_id=s.scene_id, start_ms=s.start_ms,
+                                        end_ms=s.end_ms) for s in slots}
+
+    def _plan_scene(self, state: PipelineState, scene: Scene, frame: SceneFrame,
+                    timing: SceneTiming, segments: List[AudioSegment],
+                    is_last_scene: bool) -> List[PlannedShot]:
+        """Decide every cut in a scene. Pure planning — nothing is rendered."""
+        video = state.video
+        fps = video.fps
+        bank = frame.shot_bank or [frame.image_path]
+        characters = {c.id: c for c in state.script.characters.characters}
+        spans: List[Dict[str, Any]] = []   # {start, end, sources, kind, char, audio, video}
+
+        first_line_start = segments[0].start_ms if segments else timing.end_ms
+        if first_line_start > timing.start_ms:
+            if frame.t2v_clip and Path(frame.t2v_clip).exists():
+                spans.append({"start": timing.start_ms, "end": first_line_start,
+                              "sources": [frame.t2v_clip], "kind": "establishing",
+                              "video": True})
+            else:
+                spans.append({"start": timing.start_ms, "end": first_line_start,
+                              "sources": bank if not segments else bank[:1],
+                              "kind": "establishing"})
+
+        for i, seg in enumerate(segments):
+            end = segments[i + 1].start_ms if i + 1 < len(segments) else timing.end_ms
+            char = characters.get(seg.character_id)
+            if char is None or char.role == "narrator":
+                # Narrator: show the world, rotating through the shot bank.
+                spans.append({"start": seg.start_ms, "end": end, "sources": bank,
+                              "kind": "establishing"})
+                continue
+            portrait = frame.portrait_overrides.get(seg.character_id) or \
+                (video.portrait_for(seg.character_id).image_path
+                 if video.portrait_for(seg.character_id) else bank[0])
+            lip_clip = self._lip_sync_clip(state, frame.scene_id, i, portrait, seg) \
+                if video.used_lip_sync else None
+            if lip_clip:
+                spans.append({"start": seg.start_ms, "end": end, "sources": [lip_clip],
+                              "kind": "lip_sync", "char": seg.character_id,
+                              "audio": seg.file_path, "video": True})
+            else:
+                # Portrait, with a B-roll cutaway in the middle of long lines.
+                sources = [portrait, bank[1 % len(bank)], portrait] \
+                    if end - seg.start_ms > MAX_SHOT_MS else [portrait]
+                spans.append({"start": seg.start_ms, "end": end, "sources": sources,
+                              "kind": "character", "char": seg.character_id,
+                              "audio": seg.file_path})
+
+        planned: List[PlannedShot] = []
+        for span_idx, span in enumerate(spans):
+            pieces = [(span["start"], span["end"])] if span.get("video") \
+                else split_span(span["start"], span["end"], MAX_SHOT_MS, MIN_SHOT_MS)
+            for j, (a, b) in enumerate(pieces):
+                suffix = "est" if span["kind"] == "establishing" and span_idx == 0 \
+                    and first_line_start > timing.start_ms else f"s{span_idx + 1}"
+                shot_id = f"{frame.scene_id}_{suffix}" + (f"_p{j + 1}" if len(pieces) > 1 else "")
+                nominal = span_frames(a, b, fps)
+                planned.append(PlannedShot(
+                    shot_id=shot_id, kind=span["kind"],
+                    source=span["sources"][j % len(span["sources"])],
+                    start_ms=a, end_ms=b, nominal_frames=nominal, render_frames=nominal,
+                    motion="lip_sync" if span["kind"] == "lip_sync"
+                    else pick_motion_for_index(scene.index, len(planned)),
+                    character_id=span.get("char"),
+                    audio_path=span.get("audio") if j == 0 else None,
+                    is_video=bool(span.get("video")),
+                ))
+
+        # Extra frames to cover crossfade overlaps: every shot but the last
+        # overlaps the next shot; the scene's last shot overlaps the next scene.
+        shot_x = xfade_frames(SHOT_XFADE_MS, fps)
+        scene_x = xfade_frames(SCENE_XFADE_MS, fps)
+        for k, p in enumerate(planned):
+            if k < len(planned) - 1:
+                p.render_frames = p.nominal_frames + shot_x
+            elif not is_last_scene:
+                p.render_frames = p.nominal_frames + scene_x
+        return planned
+
+    def _lip_sync_clip(self, state: PipelineState, scene_id: str, line_idx: int,
+                       portrait: str, seg: AudioSegment) -> Optional[str]:
+        """Real lip-sync clip from a provider, or None to fall back to stills."""
+        if not seg.file_path or not Path(seg.file_path).exists():
+            return None
+        out = project_dir(state.project_id) / "video" / "lipsync" / f"{scene_id}_l{line_idx + 1}.mp4"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        res = self.tools.execute(
+            "vision.lip_sync", image_path=portrait, audio_path=seg.file_path,
+            out_path=str(out), duration_s=seg.duration_ms / 1000.0,
+            width=state.video.width, height=state.video.height, fps=state.video.fps,
+        )
+        if res.success and str(res.metadata.get("provider", "")).startswith(("fal", "replicate")):
+            return res.data
+        return None
+
+    def _signature(self, planned: List[PlannedShot], video: VideoOutput) -> str:
+        """Fingerprint of a scene's plan + source files; changes when a re-render is needed."""
+        def stamp(path: Optional[str]) -> Any:
+            if not path:
+                return None
+            try:
+                st = Path(path).stat()
+                return [path, st.st_size, st.st_mtime_ns]
+            except OSError:
+                return [path, None]
+        payload = {
+            "fmt": [video.width, video.height, video.fps, video.cinematic_post,
+                    SHOT_XFADE_MS, SCENE_XFADE_MS],
+            "shots": [[p.kind, stamp(p.source), p.render_frames, p.motion, p.is_video]
+                      for p in planned],
+        }
+        return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+    @staticmethod
+    def _to_shot(scene_id: str, p: PlannedShot) -> Shot:
+        return Shot(
+            shot_id=p.shot_id, scene_id=scene_id,
+            kind=p.kind if p.kind in ("establishing", "character", "lip_sync") else "broll",
+            character_id=p.character_id, image_path=p.source, clip_path=None,
+            duration_ms=p.end_ms - p.start_ms, motion=p.motion, audio_path=p.audio_path,
+            start_ms=p.start_ms, render_frames=p.render_frames,
+        )
+
+    # ---- rendering -------------------------------------------------------
+
+    def _render_scene(self, state: PipelineState, scene_id: str,
+                      planned: List[PlannedShot]) -> Path:
+        video = state.video
+        proj = project_dir(state.project_id)
+        shot_dir = proj / "video" / "shots"
+        scene_dir = proj / "video" / "scenes"
+        shot_dir.mkdir(parents=True, exist_ok=True)
+        scene_dir.mkdir(parents=True, exist_ok=True)
+
+        paths: List[Path] = []
+        for p in planned:
+            rs = RenderShot(image_path=p.source, duration_ms=p.end_ms - p.start_ms,
+                            motion=p.motion, frames=p.render_frames, is_lip_sync=p.is_video)
+            paths.append(render_shot(rs, shot_dir / f"{p.shot_id}.mp4",
+                                     video.width, video.height, video.fps,
+                                     add_grain=video.cinematic_post,
+                                     add_vignette=video.cinematic_post))
+        scene_clip = scene_dir / f"{scene_id}.mp4"
+        assemble_scene(
+            paths, scene_clip,
+            crossfade_ms=xfade_frames(SHOT_XFADE_MS, video.fps) * 1000.0 / video.fps,
+            durations_s=[p.render_frames / video.fps for p in planned],
+        )
+        log.info("  scene %s composed (%d shots)", scene_id, len(planned))
+        return scene_clip
+
+    def _compose_final(self, state: PipelineState) -> Path:
+        video = state.video
+        proj = project_dir(state.project_id)
+        fps = video.fps
+        shot_x = xfade_frames(SHOT_XFADE_MS, fps)
+        scene_x = xfade_frames(SCENE_XFADE_MS, fps)
+
+        clips, durations = [], []
+        for f in video.frames:
+            frames = sum(s.render_frames for s in f.shots) - shot_x * (len(f.shots) - 1)
+            clips.append(f.clip_path)
+            durations.append(frames / fps)
+
+        out = proj / "final_output.mp4"
+        master = state.audio.master_track if state.audio else None
+        compose = self.tools.execute(
+            "video.compose", clips=clips, out_path=str(out), audio_path=master,
+            transition="fade", transition_ms=scene_x * 1000.0 / fps, durations_s=durations,
+        )
+        if not compose.success:
+            raise RuntimeError(f"final compose failed: {compose.error}")
+        if compose.metadata.get("fallback"):
+            log.warning("crossfade compose failed; fell back to hard cuts — "
+                        "audio may drift by up to %.1fs",
+                        (len(clips) - 1) * scene_x / fps)
+
+        final = out
+        if abs(video.speed_factor - 1.0) > 1e-3:
+            final = self._apply_speed(out, proj / "final_output_speed.mp4",
+                                      video.speed_factor, has_audio=bool(master))
+
+        video.subtitle_languages = []
+        if video.has_subtitles and state.audio:
+            subbed = self._embed_subtitles(state, final)
+            if subbed:
+                final = subbed
+        return final
+
+    @staticmethod
+    def _apply_speed(src: Path, dst: Path, factor: float, has_audio: bool) -> Path:
+        """ffmpeg setpts (video) + atempo chain (audio, bounded to [0.5, 2] per stage)."""
+        af_chain = []
+        atempo = factor
+        while atempo > 2.0:
+            af_chain.append("atempo=2.0")
+            atempo /= 2.0
+        while atempo < 0.5:
+            af_chain.append("atempo=0.5")
+            atempo *= 2.0
+        af_chain.append(f"atempo={atempo:.4f}")
+        fc = f"[0:v]setpts={1 / factor:.6f}*PTS[v]"
+        cmd = ["ffmpeg", "-y", "-i", str(src)]
+        if has_audio:
+            fc += f";[0:a]{','.join(af_chain)}[a]"
+            cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "[a]",
+                    "-c:a", "aac", "-b:a", "192k"]
+        else:
+            cmd += ["-filter_complex", fc, "-map", "[v]", "-an"]
+        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", str(dst)]
+        subprocess.run(cmd, check=True, capture_output=True)
+        return dst
+
+    # ---- subtitles -------------------------------------------------------
+
+    def _embed_subtitles(self, state: PipelineState, video_path: Path) -> Optional[Path]:
+        """Embed English + requested languages as switchable soft-sub tracks.
+
+        A language whose translation fails is skipped (never shipped as English
+        under a foreign label). Translations are cached on the VideoOutput and
+        reused until the English lines change.
+        """
+        video = state.video
+        segs = [s for s in state.audio.manifest.segments if s.kind == "dialogue" and s.text]
+        if not segs:
+            return None
+        english = [s.text for s in segs]
+        if video.subtitle_source != english:
+            video.subtitle_source = english
+            video.subtitle_cache = {}
+
+        tracks: Dict[str, List[Dict[str, Any]]] = {}
+        speed = video.speed_factor
+        for lang in self._subtitle_languages(video):
+            texts = english if lang == "English" else video.subtitle_cache.get(lang)
+            if texts is None or len(texts) != len(english):
+                res = self.tools.execute("text.translate", lines=english, target_language=lang)
+                if not res.success:
+                    log.warning("subtitle translation to %s failed (%s) — track skipped",
+                                lang, res.error)
+                    continue
+                texts = res.data
+                video.subtitle_cache[lang] = texts
+                log.info("translated %d subtitle lines to %s via %s",
+                         len(texts), lang, res.metadata.get("provider"))
+            tracks[lang] = [{"start_ms": int(s.start_ms / speed), "end_ms": int(s.end_ms / speed),
+                             "text": t} for s, t in zip(segs, texts)]
+
+        out = project_dir(state.project_id) / "final_output_multilang.mp4"
+        res = self.tools.execute("video.multi_subtitle", in_path=str(video_path),
+                                 out_path=str(out), tracks=tracks,
+                                 default_language=video.subtitle_language
+                                 if video.subtitle_language in tracks else "English")
+        if not res.success:
+            log.warning("subtitle embed failed: %s — returning video without subtitles",
+                        res.error)
+            return None
+        video.subtitle_languages = list(res.metadata.get("languages", []))
+        log.info("embedded %d soft-sub tracks (%s); default=%s", len(video.subtitle_languages),
+                 ", ".join(video.subtitle_languages), video.subtitle_language)
+        return out
+
+    @staticmethod
+    def _subtitle_languages(video: VideoOutput) -> List[str]:
+        """English, the chosen language, then any SUBTITLE_EXTRA_LANGUAGES from .env."""
+        wanted = ["English", video.subtitle_language]
+        wanted += [s for s in os.getenv("SUBTITLE_EXTRA_LANGUAGES", "").split(",") if s.strip()]
+        out: List[str] = []
+        for name in wanted:
+            lang = canonical(name)
+            if not lang:
+                log.warning("ignoring unsupported subtitle language %r", name)
+            elif lang not in out:
+                out.append(lang)
+        return out
+
+
+def _seed(prompt: str, salt: str = "") -> int:
+    """Stable per-prompt seed; a salt (e.g. the version) gives a fresh variation."""
+    return int(hashlib.md5(f"{prompt}|{salt}".encode()).hexdigest()[:8], 16) % 2**31

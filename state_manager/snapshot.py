@@ -2,10 +2,42 @@
 from __future__ import annotations
 import shutil
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, Iterable, List
 
 from shared import constants
 from shared.utils.files import ensure_dir, project_dir
+
+
+def referenced_files(state: Any, extra: Iterable[str] = ()) -> List[str]:
+    """Every existing file inside the project directory that `state` points to.
+
+    Walks the whole serialized state (script, audio, video, phase artifact
+    lists), so any file an agent or edit records is captured by snapshots
+    without maintaining separate asset lists.
+    """
+    proj_root = project_dir(state.project_id).resolve()
+    found: Dict[str, None] = {}
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            for v in value.values():
+                visit(v)
+        elif isinstance(value, (list, tuple)):
+            for v in value:
+                visit(v)
+        elif isinstance(value, str) and ("/" in value or "\\" in value) and len(value) < 1024:
+            p = Path(value)
+            try:
+                if p.is_file() and p.resolve().is_relative_to(proj_root):
+                    found.setdefault(str(p), None)
+            except (OSError, ValueError):
+                pass
+
+    visit(state.model_dump(mode="json"))
+    for path in extra:
+        if path and Path(path).is_file():
+            found.setdefault(str(path), None)
+    return list(found)
 
 
 def snapshot_assets(project_id: str, version: int, asset_paths: List[str]) -> List[str]:

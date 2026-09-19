@@ -31,7 +31,8 @@ class PipelineGraph:
         if entry:
             self.entry = name
 
-    def run(self, ctx: RunContext, on_node: Callable[[str, RunContext], None] | None = None):
+    def run(self, ctx: RunContext, on_node: Callable[[str, RunContext], None] | None = None,
+            on_node_done: Callable[[str, RunContext], None] | None = None):
         if not self.entry:
             raise RuntimeError("graph has no entry node")
         cursor = self.entry
@@ -44,4 +45,6 @@ class PipelineGraph:
             except Exception as e:  # noqa: BLE001
                 ctx.error = f"{type(e).__name__}: {e}"
                 raise
+            if on_node_done:
+                on_node_done(node.name, ctx)
             cursor = node.next[0] if node.next else ""

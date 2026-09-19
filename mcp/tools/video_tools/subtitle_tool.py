@@ -5,24 +5,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 from mcp.base_tool import BaseTool, ToolResult
-
-
-# ISO 639-2/B language codes that ffmpeg/MP4 expect in -metadata language=...
-LANG_CODE = {
-    "english": "eng",
-    "french":  "fre",
-    "spanish": "spa",
-    "german":  "ger",
-    "urdu":    "urd",
-    "arabic":  "ara",
-    "hindi":   "hin",
-    "chinese": "chi",
-    "japanese":"jpn",
-    "korean":  "kor",
-    "russian": "rus",
-    "italian": "ita",
-    "portuguese":"por",
-}
+from shared.languages import iso639_2
 
 
 def _ms_to_srt_ts(ms: int) -> str:
@@ -140,7 +123,7 @@ class MultiSubtitleTool(BaseTool):
 
         # Per-stream metadata: language code + human-readable title (player menu).
         for sub_idx, lang in enumerate(ordered[:len(srt_paths)]):
-            code = LANG_CODE.get(lang.lower(), "und")
+            code = iso639_2(lang)
             cmd += [f"-metadata:s:s:{sub_idx}", f"language={code}"]
             cmd += [f"-metadata:s:s:{sub_idx}", f"title={lang}"]
             # Mark the default track as default + forced so players auto-select it.

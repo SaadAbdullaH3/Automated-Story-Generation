@@ -3,7 +3,9 @@
 Provider precedence (when LOCAL_SD=1, local diffusers wins; otherwise default):
 1. Local Diffusers SDXL Turbo  (LOCAL_SD=1, fastest local — uses CUDA GPU)
 2. Stable Diffusion WebUI       (SD_API_URL set — Automatic1111 HTTP API)
-3. Pollinations.ai              (default, free, no API key)
+3. Pollinations.ai              (default; POLLINATIONS_API_KEY -> gen.pollinations.ai,
+                                 otherwise the legacy keyless endpoint, which
+                                 serves a weaker model at reduced size)
 4. OpenAI image API             (OPENAI_API_KEY + POLLINATIONS_DISABLE=1)
 5. PIL placeholder              (offline gradient fallback)
 """
@@ -65,9 +67,9 @@ class ImageGenTool(BaseTool):
         # 3. Pollinations.ai (free default)
         if os.getenv("POLLINATIONS_DISABLE") != "1":
             try:
-                self._pollinations(full_prompt, out, width, height, seed)
+                meta = self._pollinations(full_prompt, out, width, height, seed)
                 return ToolResult(success=True, data=str(out),
-                                  metadata={"provider": "pollinations", "seed": seed})
+                                  metadata={"provider": "pollinations", "seed": seed, **meta})
             except Exception as e:  # noqa: BLE001
                 log.warning("pollinations failed (%s) — trying next provider", e)
 
@@ -182,14 +184,43 @@ class ImageGenTool(BaseTool):
             img = img.resize((w, h), Image.LANCZOS)
         img.save(out)
 
-    def _pollinations(self, prompt: str, out: Path, w: int, h: int, seed: int) -> None:
+    def _pollinations(self, prompt: str, out: Path, w: int, h: int, seed: int) -> dict:
+        """Pollinations image generation. Returns metadata about what was served.
+
+        With POLLINATIONS_API_KEY (free account at enter.pollinations.ai) this
+        uses gen.pollinations.ai and POLLINATIONS_MODEL (default z-image-turbo).
+        Without a key it falls back to the legacy keyless endpoint, which as of
+        2026-09 ignores the requested model/size and serves `sana` at ~1024x576.
+        """
         import requests
         encoded = urllib.parse.quote(prompt)
-        url = (f"https://image.pollinations.ai/prompt/{encoded}"
-               f"?width={w}&height={h}&seed={seed}&nologo=true&model=flux")
-        r = requests.get(url, timeout=120)
+        key = os.getenv("POLLINATIONS_API_KEY")
+        if key:
+            model = os.getenv("POLLINATIONS_MODEL", "tongyi-mai/z-image-turbo")
+            url = (f"https://gen.pollinations.ai/image/{encoded}"
+                   f"?model={urllib.parse.quote(model, safe='')}&width={w}&height={h}&seed={seed}")
+            r = requests.get(url, headers={"Authorization": f"Bearer {key}"}, timeout=120)
+            endpoint = "gen"
+        else:
+            model = "flux"
+            url = (f"https://image.pollinations.ai/prompt/{encoded}"
+                   f"?width={w}&height={h}&seed={seed}&nologo=true&model={model}")
+            r = requests.get(url, timeout=120)
+            endpoint = "legacy"
         r.raise_for_status()
-        out.write_bytes(r.content)
+        ctype = r.headers.get("content-type", "")
+        if not ctype.startswith("image/"):
+            raise RuntimeError(f"expected an image, got {ctype or 'no content-type'}: "
+                               f"{r.text[:200]!r}")
+        served = _served_model(r.content)
+        native = _save_image_bytes(r.content, out, w, h)
+        if endpoint == "legacy" and served and served != model:
+            _warn_once("legacy_pollinations",
+                       "Pollinations legacy endpoint served model %r at %dx%d instead of %r "
+                       "at %dx%d. Set POLLINATIONS_API_KEY (free at enter.pollinations.ai) "
+                       "for the requested model.", served, native[0], native[1], model, w, h)
+        return {"endpoint": endpoint, "requested_model": model,
+                "served_model": served or model, "native_size": list(native)}
 
     def _openai_images(self, prompt: str, out: Path, w: int, h: int) -> None:
         from openai import OpenAI
@@ -199,7 +230,8 @@ class ImageGenTool(BaseTool):
         import requests
         img_url = resp.data[0].url
         r = requests.get(img_url, timeout=60)
-        out.write_bytes(r.content)
+        r.raise_for_status()
+        _save_image_bytes(r.content, out, w, h)
 
     def _stable_diffusion(self, prompt: str, negative: str, out: Path,
                           w: int, h: int, seed: int) -> None:
@@ -236,7 +268,7 @@ class ImageGenTool(BaseTool):
         r = requests.post(f"{api}/sdapi/v1/txt2img", json=payload, timeout=300)
         r.raise_for_status()
         b64 = r.json()["images"][0]
-        out.write_bytes(base64.b64decode(b64))
+        _save_image_bytes(base64.b64decode(b64), out, w, h)
 
     def _pil_placeholder(self, prompt: str, out: Path, w: int, h: int, seed: int) -> None:
         from PIL import Image, ImageDraw, ImageFont
@@ -276,3 +308,40 @@ class ImageGenTool(BaseTool):
         )
         draw.text(((w - tw) // 2, h - th - 60), text, fill=(255, 255, 255), font=font)
         img.save(out)
+
+
+# ---- helpers ------------------------------------------------------------
+
+_WARNED: set = set()
+
+
+def _warn_once(key: str, msg: str, *args) -> None:
+    if key not in _WARNED:
+        _WARNED.add(key)
+        log.warning(msg, *args)
+
+
+def _save_image_bytes(data: bytes, out: Path, w: int, h: int) -> tuple:
+    """Decode provider bytes, cover-fit to exactly w x h, save in `out`'s format.
+
+    Returns the provider's native (width, height). Raises if the bytes aren't
+    an image, so a provider error page is never saved as a picture.
+    """
+    from PIL import Image, ImageOps
+    img = Image.open(BytesIO(data))
+    img.load()
+    native = img.size
+    img = img.convert("RGB")
+    if img.size != (w, h):
+        img = ImageOps.fit(img, (w, h), method=Image.LANCZOS)
+    fmt = {".jpg": "JPEG", ".jpeg": "JPEG", ".webp": "WEBP"}.get(out.suffix.lower(), "PNG")
+    img.save(out, format=fmt)
+    return native
+
+
+def _served_model(data: bytes) -> Optional[str]:
+    """Pollinations embeds generation params (incl. the model) as JSON in EXIF."""
+    import re
+    head = data[:4096].decode("latin-1", errors="ignore")
+    m = re.search(r'"model"\s*:\s*"([^"]+)"', head)
+    return m.group(1) if m else None
