@@ -59,10 +59,12 @@ Outputs go to `data/outputs/<project_id>/`, version snapshots to
 | Cross-phase contract | `shared/schemas/` | Pydantic models. `PipelineState` is the object passed between phases and versioned. Change these carefully: every phase depends on them. |
 | Orchestrator | `agents/orchestrator/` | Plain-Python graph (not LangGraph) running phase1 → phase2 → phase3, emitting `ProgressEvent`s. |
 | Phase 1 | `agents/story_agent/` | LLM structured output → `ScriptOutput`; `planner.py` is the deterministic template used when the LLM is `mock`. |
-| Phase 2 | `agents/audio_agent/` | Per-line TTS, per-scene BGM, master mix, `timing_manifest.json`. |
-| Phase 3 | `agents/video_agent/` | Portraits + 3-image shot bank per scene → per-line shots (`animator.py`) → per-scene crossfade → final compose + soft-sub tracks. |
-| Phase 5 | `agents/edit_agent/` | `intent_classifier.py` (LLM or regex) → `planner.py` (steps) → `executor.py` (re-runs) → snapshot. |
-| Versioning | `state_manager/` | Append-only SQLite log + full asset copies per version; revert creates a new version. |
+| Timeline | `shared/timeline.py` | **Single source of truth for timing.** Audio places lines on it, video cuts on its boundaries (absolute ms → frames), subtitles read it. Never time video or audio independently. |
+| Phase 2 | `agents/audio_agent/` | `render_line` (TTS) → `retime` (timeline) → `remix` (per-scene BGM + master with lines placed at `start_ms`). Edits reuse these. |
+| Phase 3 | `agents/video_agent/` | `run`: portraits + 3-image shot bank per scene. `compose`: plan shots from the timeline → render changed scenes only (`plan_signature`) → scene crossfades → master mux → speed → soft-sub tracks. Edits call `compose`. |
+| Phase 5 | `agents/edit_agent/` | `intent_classifier.py` (LLM or regex; matches character names) → `planner.py` (steps) → `executor.py` (reuses Phase 2/3 primitives) → snapshot. |
+| Versioning | `state_manager/` | Append-only SQLite log + asset copies per version; `referenced_files(state)` collects every file the state points to. Revert creates a new version. |
+| Languages | `shared/languages.py` | Supported subtitle languages (ISO codes + MyMemory codes). UI dropdown is served from here. |
 | Tool layer | `mcp/` | Internal tool registry (**not** the MCP protocol). Tools register on `import mcp.tools`; agents call `ToolExecutor().execute("audio.tts", ...)`. Each tool tries providers in order and falls back. |
 | LLM client | `mcp/tools/llm_tools/llm_client.py` | Gemini → OpenAI → Anthropic → mock. `LLM_PROVIDER` forces one. |
 | Backend | `backend/` | FastAPI routes, in-memory run registry, WebSocket progress at `/ws/progress/{pid}`, `/assets` serves `data/outputs`. |
@@ -73,7 +75,14 @@ Outputs go to `data/outputs/<project_id>/`, version snapshots to
 - Tools return `ToolResult(success, data, error, metadata)`; `safe_run` turns exceptions into failures.
 - New tools subclass `mcp.base_tool.BaseTool` and are registered in the category `__init__.py`.
 - Every phase writes JSON artifacts to disk and records paths in `state.phaseN.artifact_paths`.
-  Snapshots only copy paths listed there.
+  Snapshots copy every file referenced anywhere in the state (`state_manager.snapshot.referenced_files`),
+  so anything an agent or edit records in the state is undoable.
+- Clips are rendered to exact frame counts (`-frames:v`), and each clip except the last in a
+  crossfade chain gets extra frames (`xfade_frames`) so crossfades never shorten the film.
+- Providers must fail loudly: return `success=False` (or raise) rather than silently shipping
+  degraded output (e.g. untranslated subtitles, error pages saved as images).
+- Test helpers in `tests/conftest.py`: `isolated_dirs`, `small_project` (full 320x180@12fps render
+  with silent TTS), `silence_tts(tools)`, `fake_translation`.
 - Tests force `LLM_PROVIDER=mock` and `POLLINATIONS_DISABLE=1` (see `tests/conftest.py`)
   and monkeypatch `shared.constants` paths into `tmp_path`.
 
@@ -84,23 +93,28 @@ took **779 s**: story <1 s, audio 32 s, **images ~630 s (15 serial Pollinations 
 shot rendering + scene assembly 24 s, final compose ~7 s, subtitle translation 81 s.
 Measured voice-vs-picture drift: the voice leads the picture by 2.4 s in scene 1, 3.6 s in scene 2, 5.0 s in scene 3 and 6.1 s in scene 4.
 
-## Known issues (tracked for M1)
+## M1 results (2026-09-19)
 
-- Audio/video/subtitle timelines diverge: the master audio is dialogue concatenated with no gaps,
-  while the video adds establishing pre-roll and crossfades, and the manifest adds scene padding.
-- Edit re-runs of TTS drop the character's `voice_id`, and edge-tts ignores `rate` (so "whispered" is a no-op).
-- Recompose after any edit burns in English subs, replacing the multi-language soft-sub tracks.
-- Edits don't update `artifact_paths`, so new files aren't included in snapshots.
-- Filters `noir/cinematic/dreamy/pastel/anime` are classified but have no implementation.
-- `run_registry.push_event` calls `asyncio.Queue.put_nowait` from a worker thread (not thread-safe).
-- The legacy `image.pollinations.ai` endpoint silently serves the `sana` model at 1024x576 instead
-  of FLUX; the new `gen.pollinations.ai` requires an API key.
-- Subtitle translation calls Google Translate line by line and gets rate-limited: in the M0
-  baseline run all 48 translated lines failed, fell back to English, and were still embedded as
-  "French/Spanish/German/Urdu" tracks while the log reported success.
-- `--duration 30` produced a 60.5 s film: the template's per-scene minimum (8 s) and real TTS
-  lengths overshoot the target.
-- Pollinations images come back as JPEG bytes saved with a `.png` extension.
-- The UI offers a Japanese subtitle option, but only English/French/Spanish/German/Urdu tracks are generated.
-- `backend/routes/projects.py` splits paths on `/` only (breaks on Windows).
-- Gemini uses the deprecated `google-generativeai` SDK and the retired `gemini-1.5-flash` default.
+87/87 tests pass. Fixed: audio/video/subtitle drift (single timeline; final video frame count
+equals the timeline exactly), duration overshoot (template + LLM word budget), untranslated
+subtitle tracks (LLM → MyMemory, failed languages skipped), Pollinations downgrade (keyed endpoint
+support, image validation, exact size/format, warning when degraded), edit voice bugs (voice kept,
+tone/rate/pitch/volume applied via edge-tts prosody, character names understood), edits dropping
+multi-language subs and speed, snapshot coverage, silent no-op filters, thread-unsafe progress
+events, Windows path bug, UI language list, re-run phase resetting settings.
+
+Real run (same prompt as M0, `--duration 30 --scenes 4 --subtitle-lang Urdu`): 662 s total (images
+still ~630 s via the legacy Pollinations endpoint), 30.8 s film (was 60.5 s), final video 739/739
+frames = timeline, every line on a cut, Urdu + English tracks. Whisper edit on Aria re-recorded only
+her lines (slower -> timeline 34.9 s -> 37.1 s) and the video followed exactly (891/891 frames).
+Scene filter edit ~6 s; revert 0.2 s and byte-identical to v1.
+
+## Known issues / next milestones
+
+- Gemini uses the deprecated `google-generativeai` SDK and the retired `gemini-1.5-flash`
+  default (M2: model settings layer + free-tier providers).
+- Without `POLLINATIONS_API_KEY`, images come from the legacy endpoint (`sana`, ~1024x576) and
+  take ~40 s each, one at a time (M2: Cloudflare FLUX / local Z-Image, parallel generation).
+- The web player can't show MP4 soft subtitles; the UI needs `<track>` WebVTT files (M4 frontend).
+- Snapshots copy every file per version — storage grows quickly (M4: content-addressed storage).
+- Scene-scoped voice edits apply to that scene only until a later global audio edit re-renders it.
