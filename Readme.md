@@ -416,22 +416,43 @@ $ python -m pytest -q
 
 ## Configuration
 
-All knobs live in `.env`. Everything is optional.
+**Which model does what** lives in [`config/providers.yaml`](config/providers.yaml);
+`.env` only holds credentials. Each agent asks for a *role* — `story`,
+`edit_intent`, `translate`, `image`, `tts`, `music` — and gets the first provider
+in that role's list whose keys are present. If a call fails at run time, the next
+provider takes over. Nothing works? Everything still runs offline (template
+script, keyword edits, placeholder images, silent audio).
 
-| Variable | Purpose |
-|----------|---------|
-| `LLM_PROVIDER` | force one of `gemini` / `openai` / `anthropic` / `mock` |
-| `GEMINI_API_KEY` / `GEMINI_MODEL` | Google Gemini (free tier exists) |
-| `OPENAI_API_KEY` / `OPENAI_MODEL` | OpenAI |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | Anthropic Claude |
-| `ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE_ID` | premium TTS |
-| `POLLINATIONS_API_KEY` / `POLLINATIONS_MODEL` | free Pollinations account key -> real models (default `tongyi-mai/z-image-turbo`); without it the legacy endpoint serves a weaker model at reduced size |
-| `POLLINATIONS_DISABLE` | set to `1` to skip the free image-gen API |
-| `SUBTITLE_EXTRA_LANGUAGES` | extra subtitle tracks, e.g. `Urdu,French` |
-| `MYMEMORY_EMAIL` | raises the free MyMemory translation quota (~5k -> ~50k chars/day) |
-| `SD_API_URL` | Automatic1111 / ComfyUI URL for local Stable Diffusion |
+```bash
+python main.py providers     # shows the chain per role and what each one needs
+```
 
-Mock mode is the default. The CI / unit-tests run that way to stay deterministic.
+To change a model, reorder a chain, or add a paid provider later, edit the YAML —
+no code changes. Handy overrides: `PROVIDERS_FILE` (use another file),
+`PROVIDER_IMAGE=placeholder` (force one provider for a role), `LLM_PROVIDER=mock`
+(force the offline path; the tests use this).
+
+### Free keys worth adding (all no-card)
+
+| Key in `.env` | Unlocks | Where |
+|---|---|---|
+| `GEMINI_API_KEY` | Gemini Flash writes the script, classifies edits and translates subtitles | [aistudio.google.com](https://aistudio.google.com/app/apikey) |
+| `GROQ_API_KEY` | fast fallback LLM (`openai/gpt-oss-120b`) | [console.groq.com](https://console.groq.com/keys) |
+| `OPENROUTER_API_KEY` | second fallback via `openrouter/free` | [openrouter.ai](https://openrouter.ai/keys) |
+| `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` | **FLUX images, 4 at a time** (10,000 neurons/day ≈ 170 images) instead of the slow keyless Pollinations endpoint | [dash.cloudflare.com](https://dash.cloudflare.com) |
+| `POLLINATIONS_API_KEY` | real Pollinations models instead of the degraded legacy one | [enter.pollinations.ai](https://enter.pollinations.ai) |
+| `OLLAMA_HOST` | local models through Ollama, fully offline | `ollama serve` |
+
+Other `.env` knobs: `ELEVENLABS_API_KEY` (premium TTS), `SD_API_URL` (Automatic1111 /
+ComfyUI), `LOCAL_SD=1` (in-process diffusers), `SUBTITLE_EXTRA_LANGUAGES=Urdu,French`,
+`MYMEMORY_EMAIL` (raises the free translation quota from ~5k to ~50k chars/day).
+
+### Parallelism
+
+Each provider declares how many calls it tolerates at once (`concurrency:`), and
+images and TTS lines fan out to that limit. Cloudflare runs 4 image jobs in
+parallel; the keyless Pollinations endpoint answers one request per IP (it returns
+429s for the rest), and a local GPU pipeline stays at 1.
 
 ---
 

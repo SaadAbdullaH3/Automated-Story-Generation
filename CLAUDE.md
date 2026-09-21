@@ -66,7 +66,8 @@ Outputs go to `data/outputs/<project_id>/`, version snapshots to
 | Versioning | `state_manager/` | Append-only SQLite log + asset copies per version; `referenced_files(state)` collects every file the state points to. Revert creates a new version. |
 | Languages | `shared/languages.py` | Supported subtitle languages (ISO codes + MyMemory codes). UI dropdown is served from here. |
 | Tool layer | `mcp/` | Internal tool registry (**not** the MCP protocol). Tools register on `import mcp.tools`; agents call `ToolExecutor().execute("audio.tts", ...)`. Each tool tries providers in order and falls back. |
-| LLM client | `mcp/tools/llm_tools/llm_client.py` | Gemini → OpenAI → Anthropic → mock. `LLM_PROVIDER` forces one. |
+| Model settings | `config/providers.yaml` + `shared/providers.py` | **Which model serves each role** (story, edit_intent, translate, image, tts, music). Agents never name a model: they call `providers.chain(role)` and use the first available, falling through on failure. `concurrency:` per provider drives `shared/utils/parallel.run_jobs`. |
+| LLM client | `mcp/tools/llm_tools/llm_client.py` | `get_llm_client(role)` walks that role's chain: Gemini (google-genai, native JSON schema), Groq / OpenRouter / Ollama / OpenAI (all via the openai client), Anthropic, then `mock` = use the offline fallback. |
 | Backend | `backend/` | FastAPI routes, in-memory run registry, WebSocket progress at `/ws/progress/{pid}`, `/assets` serves `data/outputs`. |
 | Frontend | `frontend/src/` | Vanilla HTML/CSS/JS, no build step, served by FastAPI. |
 
@@ -83,8 +84,11 @@ Outputs go to `data/outputs/<project_id>/`, version snapshots to
   degraded output (e.g. untranslated subtitles, error pages saved as images).
 - Test helpers in `tests/conftest.py`: `isolated_dirs`, `small_project` (full 320x180@12fps render
   with silent TTS), `silence_tts(tools)`, `fake_translation`.
-- Tests force `LLM_PROVIDER=mock` and `POLLINATIONS_DISABLE=1` (see `tests/conftest.py`)
-  and monkeypatch `shared.constants` paths into `tmp_path`.
+- Tests force `LLM_PROVIDER=mock` and `PROVIDER_IMAGE=placeholder` (see `tests/conftest.py`)
+  and monkeypatch `shared.constants` paths into `tmp_path`. Point `PROVIDERS_FILE` at a
+  temp YAML to test other chains, and call `providers.load(force=True)` after changing env.
+- Adding a provider = a `_provider_<name>` method (images) or an adapter in `llm_client`,
+  plus an entry in `config/providers.yaml`. Never add an `if os.getenv(...)` chain to an agent.
 
 ## Baseline (M0, 2026-09-18)
 
@@ -109,12 +113,30 @@ frames = timeline, every line on a cut, Urdu + English tracks. Whisper edit on A
 her lines (slower -> timeline 34.9 s -> 37.1 s) and the video followed exactly (891/891 frames).
 Scene filter edit ~6 s; revert 0.2 s and byte-identical to v1.
 
+## M2 results (2026-09-21)
+
+111/111 tests pass. Added the model settings layer (`config/providers.yaml`): every agent
+resolves its model through a role chain with automatic fallback, so swapping in paid
+providers later is a config edit. LLM providers: Gemini via the current google-genai SDK
+(native structured output) plus Groq, OpenRouter and Ollama through the openai client;
+`gemini-flash-latest` is used as the model alias so a retired id can't break it. Images:
+Cloudflare Workers AI FLUX (free 10k neurons/day) ahead of Pollinations, with provider
+metadata and validation kept from M1. Image and TTS jobs now run in parallel up to each
+provider's `concurrency`. Structured-output retries now only repeat for malformed JSON;
+a provider that is down is abandoned immediately.
+
+Measured: the keyless Pollinations endpoint 429s on parallel requests (1 per IP confirmed
+by experiment), so parallelism only pays off with Cloudflare or a local model.
+**Not yet verified against live Gemini/Groq/Cloudflare APIs** — no keys on this machine;
+adapters are covered by mocked tests.
+
 ## Known issues / next milestones
 
-- Gemini uses the deprecated `google-generativeai` SDK and the retired `gemini-1.5-flash`
-  default (M2: model settings layer + free-tier providers).
-- Without `POLLINATIONS_API_KEY`, images come from the legacy endpoint (`sana`, ~1024x576) and
-  take ~40 s each, one at a time (M2: Cloudflare FLUX / local Z-Image, parallel generation).
+- Live API verification for Gemini / Groq / Cloudflare is pending free keys from the owner.
+- Without any image key, images still come from the legacy Pollinations endpoint (`sana`,
+  ~1024x576, ~40 s each, one at a time). Cloudflare or local Z-Image fixes both.
+- Voices are still edge-tts only; Kokoro / Chatterbox and ACE-Step music are M3 candidates
+  (both need a torch install, so they stay optional).
 - The web player can't show MP4 soft subtitles; the UI needs `<track>` WebVTT files (M4 frontend).
 - Snapshots copy every file per version — storage grows quickly (M4: content-addressed storage).
 - Scene-scoped voice edits apply to that scene only until a later global audio edit re-renders it.
