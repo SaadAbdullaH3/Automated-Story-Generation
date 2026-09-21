@@ -156,7 +156,7 @@ class TtsTool(BaseTool):
             out = out.with_suffix(".wav")
         cmd = [
             "ffmpeg", "-y", "-f", "lavfi",
-            "-i", f"anullsrc=channel_layout=mono:sample_rate=22050",
+            "-i", "anullsrc=channel_layout=mono:sample_rate=22050",
             "-t", f"{duration_s:.2f}",
             "-q:a", "9", "-acodec", "pcm_s16le",
             str(out),

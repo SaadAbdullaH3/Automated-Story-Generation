@@ -17,19 +17,23 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from mcp.tool_executor import ToolExecutor
+from shared import providers
 from shared.constants import PHASE_AUDIO
 from shared.schemas.audio import (
     AudioOutput, AudioSegment, SceneTiming, TimingManifest, VoiceConfig,
 )
 from shared.schemas.pipeline import PipelineState
+from shared.providers import ProviderSpec
 from shared.schemas.story import Character, ScriptOutput
 from shared.timeline import build_timeline, estimate_line_ms
 from shared.utils.files import project_dir, write_json
+from shared.utils.parallel import run_jobs
 from shared.utils.logging import get_logger
 
 log = get_logger("audio_agent")
 
 DEFAULT_VOICE = "en-US-GuyNeural"
+_SILENT = ProviderSpec(role="tts", provider="silent")
 BGM_VOLUME = 0.18
 
 # Alternate edge-tts voices per gender, used by "change voice" edits.
@@ -63,9 +67,11 @@ class AudioAgent:
     # ---- public ----------------------------------------------------------
 
     def run(self, state: PipelineState, with_bgm: bool = True,
-            tts_engine: str = "edge") -> AudioOutput:
+            tts_engine: Optional[str] = None) -> AudioOutput:
         if not state.script:
             raise ValueError("phase 2 requires state.script (run phase 1 first)")
+        # Which voice engine serves this run comes from config/providers.yaml.
+        tts_engine = tts_engine or (providers.active("tts") or _SILENT).provider
         log.info("phase 2 start (project=%s, engine=%s)", state.project_id, tts_engine)
         state.phase2.status = "running"
         state.phase2.started_at = datetime.utcnow().isoformat()
@@ -74,20 +80,24 @@ class AudioAgent:
             voice_configs = self._build_voice_configs(state.script, default_engine=tts_engine)
             cfg_by_char = {v.character_id: v for v in voice_configs}
 
-            segments: List[AudioSegment] = []
-            for scene in state.script.scenes:
-                for line in scene.dialogue:
-                    path, dur = self.render_line(
-                        state.project_id, scene.scene_id, line.line_id, line.text,
-                        cfg_by_char.get(line.character_id), fallback_ms=line.duration_ms,
-                    )
-                    segments.append(AudioSegment(
-                        segment_id=f"{scene.scene_id}_{line.line_id}",
-                        scene_id=scene.scene_id, line_id=line.line_id,
-                        character_id=line.character_id, file_path=path,
-                        kind="dialogue", start_ms=0, end_ms=dur, duration_ms=dur,
-                        text=line.text,
-                    ))
+            lines = [(scene, line) for scene in state.script.scenes for line in scene.dialogue]
+            rendered = run_jobs(
+                [(self.render_line,
+                  (state.project_id, scene.scene_id, line.line_id, line.text,
+                   cfg_by_char.get(line.character_id), line.duration_ms))
+                 for scene, line in lines],
+                workers=providers.concurrency("tts"), label="tts lines",
+            )
+            segments: List[AudioSegment] = [
+                AudioSegment(
+                    segment_id=f"{scene.scene_id}_{line.line_id}",
+                    scene_id=scene.scene_id, line_id=line.line_id,
+                    character_id=line.character_id, file_path=path,
+                    kind="dialogue", start_ms=0, end_ms=dur, duration_ms=dur,
+                    text=line.text,
+                )
+                for (scene, line), (path, dur) in zip(lines, rendered)
+            ]
 
             state.audio = AudioOutput(
                 voice_configs=voice_configs,
