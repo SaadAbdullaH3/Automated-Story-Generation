@@ -40,6 +40,7 @@ class ProviderSpec:
     params: Dict[str, Any] = field(default_factory=dict)
     requires: tuple = ()
     concurrency: int = 1
+    retries: int = 1          # attempts before moving to the next provider
 
     @property
     def missing_env(self) -> List[str]:
@@ -73,6 +74,7 @@ class ProviderConfig:
                     params=dict(entry.get("params") or {}),
                     requires=tuple(requires if isinstance(requires, list) else [requires]),
                     concurrency=int(entry.get("concurrency", 1)),
+                    retries=max(1, int(entry.get("retries", 1))),
                 ))
             self._roles[role] = specs
 

@@ -132,3 +132,24 @@ def test_pipeline_generates_images_in_parallel(isolated_dirs, monkeypatch):
     agent.run(state, with_subtitles=False, width=64, height=36, fps=6,
               use_text_to_video=False, use_lip_sync=False, cinematic_post=False)
     assert peak > 1, "image generation ran one at a time"
+
+
+def test_transient_failures_are_retried_before_falling_through(tmp_path, cloudflare, monkeypatch):
+    """A free endpoint that hiccups gets another attempt, not an instant downgrade."""
+    import time as time_mod
+    import requests
+    monkeypatch.setattr(time_mod, "sleep", lambda s: None)
+    attempts = {"n": 0}
+
+    def flaky_post(url, headers=None, json=None, timeout=None):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError("500 Server Error")
+        return _Resp({"result": {"image": base64.b64encode(_png(256, 256)).decode()}})
+
+    cloudflare(_Resp({}))                      # installs the fixture's env + get stub
+    monkeypatch.setattr(requests, "post", flaky_post)
+    res = ToolExecutor().execute("vision.generate_image", prompt="a castle",
+                                 out_path=str(tmp_path / "s.png"), width=320, height=180)
+    assert res.success and res.metadata["provider"] == "cloudflare"
+    assert res.metadata["attempt"] == 2 and attempts["n"] == 2

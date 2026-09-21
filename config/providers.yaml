@@ -7,7 +7,8 @@
 #
 # `requires` lists the environment variables a provider needs (see .env.example);
 # "A|B" means either will do. A provider with no `requires` always works offline.
-# `concurrency` is how many calls that provider tolerates in parallel.
+# `concurrency` is how many calls that provider tolerates in parallel, and
+# `retries` how many attempts it gets before the next provider takes over.
 #
 # Override the whole file with PROVIDERS_FILE=/path/to/providers.yaml, or force a
 # single provider for a role with PROVIDER_STORY / PROVIDER_IMAGE / ... =name.
@@ -76,6 +77,7 @@ roles:
       params: {steps: 8}          # max 8; square output, cropped to the project size
       requires: [CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN]
       concurrency: 4
+      retries: 3                  # free endpoints hiccup; retry before falling through
     - provider: local_sd          # in-process diffusers; needs CUDA torch (requirements-local-sd.txt)
       model: stabilityai/sdxl-turbo
       params: {steps: 4}
@@ -87,6 +89,7 @@ roles:
     - provider: pollinations      # free; without a key: weaker model, reduced size, 1 at a time
       model: tongyi-mai/z-image-turbo
       concurrency: 1
+      retries: 3
     - provider: openai            # paid: only reached if the free ones above fail
       model: dall-e-3
       requires: [OPENAI_API_KEY]

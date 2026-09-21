@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import time
 import urllib.parse
 from io import BytesIO
 from pathlib import Path
@@ -50,15 +51,22 @@ class ImageGenTool(BaseTool):
             if handler is None:
                 log.warning("unknown image provider '%s' in config — skipping", spec.provider)
                 continue
-            try:
-                meta = handler(spec, full_prompt, negative_prompt, out, width, height, seed) or {}
-                return ToolResult(success=True, data=str(out),
-                                  metadata={"provider": spec.provider, "model": spec.model,
-                                            "seed": seed, **meta})
-            except Exception as e:  # noqa: BLE001
-                errors.append(f"{spec.provider}: {e}")
-                log.warning("image provider %s failed (%s) — trying next", spec.provider,
-                            str(e)[:200])
+            # Free endpoints hiccup (429s, 500s); retry before giving up on them.
+            for attempt in range(spec.retries):
+                try:
+                    meta = handler(spec, full_prompt, negative_prompt, out,
+                                   width, height, seed) or {}
+                    return ToolResult(success=True, data=str(out),
+                                      metadata={"provider": spec.provider, "model": spec.model,
+                                                "seed": seed, "attempt": attempt + 1, **meta})
+                except Exception as e:  # noqa: BLE001
+                    errors.append(f"{spec.provider}: {e}")
+                    last = attempt == spec.retries - 1
+                    log.warning("image provider %s failed (attempt %d/%d: %s)%s",
+                                spec.provider, attempt + 1, spec.retries, str(e)[:200],
+                                "" if last else " — retrying")
+                    if not last:
+                        time.sleep(1.5 * (attempt + 1))
         return ToolResult(success=False, error="; ".join(errors) or "no image provider configured")
 
     # ---- providers -------------------------------------------------------
