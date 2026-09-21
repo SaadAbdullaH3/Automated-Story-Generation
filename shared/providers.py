@@ -79,6 +79,10 @@ class ProviderConfig:
     def roles(self) -> List[str]:
         return list(self._roles)
 
+    def specs(self, role: str) -> List[ProviderSpec]:
+        """Everything configured for a role, regardless of credentials or overrides."""
+        return list(self._roles.get(role, []))
+
     def chain(self, role: str, include_unavailable: bool = False) -> List[ProviderSpec]:
         """Providers to try for `role`, best first, skipping ones missing credentials."""
         specs = self._roles.get(role, [])
@@ -140,17 +144,25 @@ def concurrency(role: str) -> int:
 
 
 def describe() -> Dict[str, List[Dict[str, Any]]]:
-    """Every role's chain with availability — used by `main.py providers`."""
+    """Every configured provider per role, with why it is or isn't usable.
+
+    Shows the full list even when an override pins one provider, so
+    `main.py providers` always says what the alternatives are waiting for.
+    """
     cfg = load()
     out: Dict[str, List[Dict[str, Any]]] = {}
     for role in cfg.roles():
+        forced = cfg._forced_provider(role)
         rows = []
-        for spec in cfg.chain(role, include_unavailable=True):
+        for spec in cfg.specs(role):
+            missing = spec.missing_env
+            if forced and spec.provider != forced:
+                missing = missing or [f"overridden by {forced}"]
             rows.append({
                 "provider": spec.provider,
                 "model": spec.model,
-                "available": spec.available,
-                "missing": spec.missing_env,
+                "available": not missing,
+                "missing": missing,
             })
         out[role] = rows
     return out
