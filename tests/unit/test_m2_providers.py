@@ -269,6 +269,33 @@ def test_gemini_uses_native_structured_output(monkeypatch):
     assert captured["config"].response_mime_type == "application/json"
 
 
+# ---- the providers CLI -----------------------------------------------------
+
+def test_providers_command_lists_chains_and_checks_them(monkeypatch, capsys):
+    import argparse
+    import main
+    from mcp.tool_executor import ToolExecutor
+    from mcp.base_tool import ToolResult
+
+    monkeypatch.setenv("PROVIDER_IMAGE", "placeholder")
+    providers.load(force=True)
+
+    def fake_execute(self, tool, **kwargs):
+        if tool == "text.translate":
+            return ToolResult(success=True, data=["Bonsoir."], metadata={"provider": "mymemory"})
+        return ToolResult(success=True, data=kwargs.get("out_path"),
+                          metadata={"provider": "placeholder"})
+
+    monkeypatch.setattr(ToolExecutor, "execute", fake_execute)
+    code = main.cmd_providers(argparse.Namespace(check=True))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "story" in out and "image" in out
+    assert "needs GEMINI_API_KEY" in out          # says what each alternative wants
+    assert "translate    OK  via mymemory" in out
+    assert "wanted placeholder, served by placeholder" in out
+
+
 # ---- parallelism -----------------------------------------------------------
 
 def test_run_jobs_keeps_order_and_runs_concurrently():
