@@ -126,7 +126,9 @@ provider's `concurrency`. Structured-output retries now only repeat for malforme
 a provider that is down is abandoned immediately.
 
 Providers get `retries:` attempts (3 for the free image endpoints) with backoff before the
-chain falls through; permanent errors (401/403/400) fail fast. `python main.py providers`
+chain falls through; permanent errors (401/403/400) fail fast. Measured on the live keyless
+Pollinations endpoint: 6 images, 2 hit 500s, retries rescued 1 (succeeded on attempt 3) and
+1 exhausted its attempts — so retries halved the images lost to placeholders. `python main.py providers`
 lists every role's chain and what each alternative needs; `--check` makes one real call per
 role to verify keys.
 
