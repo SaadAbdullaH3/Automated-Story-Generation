@@ -14,8 +14,8 @@ class JsonStructurerTool(BaseTool):
     category = "llm"
 
     def run(self, prompt: str, schema: Type[BaseModel], system: str = "",
-            temperature: float = 0.5, **_) -> ToolResult:
-        client = get_llm_client()
+            temperature: float = 0.5, role: str = "story", **_) -> ToolResult:
+        client = get_llm_client(role)
         if client.provider == "mock":
             return ToolResult(success=False, error="mock provider — caller should use template fallback")
         try:

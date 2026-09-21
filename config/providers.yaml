@@ -1,0 +1,112 @@
+# Which model serves each job.
+#
+# Every agent asks for a ROLE (story, edit_intent, translate, image, tts, music)
+# and gets the first provider in that role's list whose credentials are present.
+# If it fails at runtime, the next one is tried. So: put the best provider first,
+# keep a free/offline one last, and never hard-code a model in agent code.
+#
+# `requires` lists the environment variables a provider needs (see .env.example);
+# "A|B" means either will do. A provider with no `requires` always works offline.
+# `concurrency` is how many calls that provider tolerates in parallel.
+#
+# Override the whole file with PROVIDERS_FILE=/path/to/providers.yaml, or force a
+# single provider for a role with PROVIDER_STORY / PROVIDER_IMAGE / ... =name.
+
+version: 1
+
+roles:
+  # ---- Writing the script (structured JSON out) --------------------------
+  story:
+    - provider: gemini            # free tier at aistudio.google.com/app/apikey
+      model: gemini-flash-latest  # alias: always the current Flash, never a retired id
+      requires: [GEMINI_API_KEY]
+    - provider: groq              # free tier at console.groq.com
+      model: openai/gpt-oss-120b
+      requires: [GROQ_API_KEY]
+    - provider: openrouter        # free tier at openrouter.ai
+      model: openrouter/free      # routes to whichever free model fits the request
+      requires: [OPENROUTER_API_KEY]
+    - provider: openai
+      model: gpt-4o-mini
+      requires: [OPENAI_API_KEY]
+    - provider: anthropic
+      model: claude-sonnet-4-6
+      requires: [ANTHROPIC_API_KEY]
+    - provider: ollama            # local models; set OLLAMA_HOST=http://localhost:11434
+      model: qwen3:4b
+      requires: [OLLAMA_HOST]
+    - provider: mock              # deterministic template script, no network
+
+  # ---- Classifying a natural-language edit (small, fast, cheap) ----------
+  edit_intent:
+    - provider: gemini
+      model: gemini-flash-latest
+      requires: [GEMINI_API_KEY]
+    - provider: groq
+      model: openai/gpt-oss-20b
+      requires: [GROQ_API_KEY]
+    - provider: openrouter
+      model: openrouter/free
+      requires: [OPENROUTER_API_KEY]
+    - provider: ollama
+      model: qwen3:4b
+      requires: [OLLAMA_HOST]
+    - provider: mock              # keyword + regex classifier
+
+  # ---- Subtitle translation ---------------------------------------------
+  translate:
+    - provider: gemini
+      model: gemini-flash-latest
+      requires: [GEMINI_API_KEY]
+    - provider: groq
+      model: openai/gpt-oss-120b
+      requires: [GROQ_API_KEY]
+    - provider: openrouter
+      model: openrouter/free
+      requires: [OPENROUTER_API_KEY]
+    - provider: ollama
+      model: qwen3:4b
+      requires: [OLLAMA_HOST]
+    - provider: mymemory          # free, no key (~5k chars/day; MYMEMORY_EMAIL raises it)
+
+  # ---- Scene images and character portraits ------------------------------
+  image:
+    - provider: cloudflare        # free: 10k neurons/day ~= 170 images
+      model: "@cf/black-forest-labs/flux-1-schnell"
+      params: {steps: 8}          # max 8; square output, cropped to the project size
+      requires: [CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN]
+      concurrency: 4
+    - provider: local_sd          # in-process diffusers; needs CUDA torch (requirements-local-sd.txt)
+      model: stabilityai/sdxl-turbo
+      params: {steps: 4}
+      requires: [LOCAL_SD]
+      concurrency: 1              # one GPU pipeline, no parallel calls
+    - provider: sd_webui          # Automatic1111 / ComfyUI HTTP API
+      requires: [SD_API_URL]
+      concurrency: 1
+    - provider: pollinations      # free; without a key: weaker model, reduced size, 1 at a time
+      model: tongyi-mai/z-image-turbo
+      concurrency: 1
+    - provider: openai            # paid: only reached if the free ones above fail
+      model: dall-e-3
+      requires: [OPENAI_API_KEY]
+      concurrency: 2
+    - provider: placeholder       # offline gradient, always works
+      concurrency: 1              # pure Python drawing: threads only add overhead
+
+  # ---- Character voices ---------------------------------------------------
+  tts:
+    - provider: elevenlabs
+      requires: [ELEVENLABS_API_KEY]
+      concurrency: 2
+    - provider: edge              # free Microsoft neural voices, no key
+      concurrency: 4
+    - provider: gtts
+      concurrency: 4
+    - provider: pyttsx3           # offline
+      concurrency: 1
+    - provider: silent            # last resort: silence of the right length
+
+  # ---- Background music ----------------------------------------------------
+  music:
+    - provider: ffmpeg            # mood-keyed synthesised bed, offline

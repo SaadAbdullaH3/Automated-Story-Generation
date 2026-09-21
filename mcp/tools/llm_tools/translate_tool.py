@@ -1,11 +1,11 @@
 """Subtitle translation tool.
 
 Strategy (first success wins):
-1. The configured LLM (when not the mock provider): one request per language,
+1. The LLM chain configured for the `translate` role: one request per language,
    answering with a JSON array aligned 1:1 with the input lines.
-2. MyMemory (free, no key): lines are batched into <=450-char newline-joined
-   requests. Anonymous use allows ~5,000 chars/day; set MYMEMORY_EMAIL in
-   .env to raise that to ~50,000.
+2. MyMemory (free, no key), when it's in that chain: lines are batched into
+   <=450-char newline-joined requests. Anonymous use allows ~5,000 chars/day;
+   set MYMEMORY_EMAIL in .env to raise that to ~50,000.
 
 If every provider fails the tool FAILS — callers must skip the language rather
 than ship an untranslated track under a foreign label.
@@ -18,6 +18,7 @@ import time
 from typing import List
 
 from mcp.base_tool import BaseTool, ToolResult
+from shared import providers
 from shared.languages import canonical, mymemory_code
 from shared.utils.logging import get_logger
 
@@ -41,7 +42,8 @@ class TranslateTool(BaseTool):
             return ToolResult(success=True, data=list(lines), metadata={"provider": "identity"})
 
         errors: List[str] = []
-        client = get_llm_client()
+        enabled = {spec.provider for spec in providers.chain("translate")}
+        client = get_llm_client("translate")
         if client.provider != "mock":
             try:
                 out = self._llm(client, lines, lang)
@@ -50,12 +52,14 @@ class TranslateTool(BaseTool):
             except Exception as e:  # noqa: BLE001
                 errors.append(f"llm: {e}")
                 log.info("LLM translation to %s failed (%s) — trying MyMemory", lang, e)
-        try:
-            out = self._mymemory(lines, lang)
-            return ToolResult(success=True, data=out, metadata={"provider": "mymemory"})
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"mymemory: {e}")
-        return ToolResult(success=False, error="; ".join(errors))
+        if "mymemory" in enabled:
+            try:
+                out = self._mymemory(lines, lang)
+                return ToolResult(success=True, data=out, metadata={"provider": "mymemory"})
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"mymemory: {e}")
+        return ToolResult(success=False,
+                          error="; ".join(errors) or "no translation provider configured")
 
     # ---- providers -------------------------------------------------------
 

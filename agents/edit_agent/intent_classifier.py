@@ -110,7 +110,7 @@ Return a JSON object:
 
 class IntentClassifier:
     def __init__(self):
-        self.llm = get_llm_client()
+        self.llm = get_llm_client("edit_intent")
 
     # ---- public API ------------------------------------------------------
 
