@@ -153,3 +153,13 @@ def test_transient_failures_are_retried_before_falling_through(tmp_path, cloudfl
                                  out_path=str(tmp_path / "s.png"), width=320, height=180)
     assert res.success and res.metadata["provider"] == "cloudflare"
     assert res.metadata["attempt"] == 2 and attempts["n"] == 2
+
+
+def test_bad_credentials_are_not_retried(tmp_path, cloudflare, monkeypatch):
+    import time as time_mod
+    monkeypatch.setattr(time_mod, "sleep", lambda s: None)
+    calls = cloudflare(_Resp({"errors": ["invalid token"]}, status=403))
+    res = ToolExecutor().execute("vision.generate_image", prompt="a castle",
+                                 out_path=str(tmp_path / "s.png"), width=320, height=180)
+    assert res.metadata["provider"] == "placeholder"
+    assert len(calls) == 1, "a 403 should fail fast, not retry"

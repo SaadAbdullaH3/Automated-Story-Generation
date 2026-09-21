@@ -61,12 +61,13 @@ class ImageGenTool(BaseTool):
                                                 "seed": seed, "attempt": attempt + 1, **meta})
                 except Exception as e:  # noqa: BLE001
                     errors.append(f"{spec.provider}: {e}")
-                    last = attempt == spec.retries - 1
+                    last = attempt == spec.retries - 1 or _is_permanent(e)
                     log.warning("image provider %s failed (attempt %d/%d: %s)%s",
                                 spec.provider, attempt + 1, spec.retries, str(e)[:200],
                                 "" if last else " — retrying")
-                    if not last:
-                        time.sleep(1.5 * (attempt + 1))
+                    if last:
+                        break
+                    time.sleep(1.5 * (attempt + 1))
         return ToolResult(success=False, error="; ".join(errors) or "no image provider configured")
 
     # ---- providers -------------------------------------------------------
@@ -335,6 +336,13 @@ class ImageGenTool(BaseTool):
 # ---- helpers ------------------------------------------------------------
 
 _WARNED: set = set()
+
+
+def _is_permanent(error: Exception) -> bool:
+    """Bad credentials or a rejected request won't succeed on a retry."""
+    text = str(error).lower()
+    return any(code in text for code in ("401", "403", "unauthorized", "forbidden",
+                                         "invalid api key", "400"))
 
 
 def _warn_once(key: str, msg: str, *args) -> None:

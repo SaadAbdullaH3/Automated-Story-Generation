@@ -125,8 +125,14 @@ metadata and validation kept from M1. Image and TTS jobs now run in parallel up 
 provider's `concurrency`. Structured-output retries now only repeat for malformed JSON;
 a provider that is down is abandoned immediately.
 
-Measured: the keyless Pollinations endpoint 429s on parallel requests (1 per IP confirmed
-by experiment), so parallelism only pays off with Cloudflare or a local model.
+Providers get `retries:` attempts (3 for the free image endpoints) with backoff before the
+chain falls through; permanent errors (401/403/400) fail fast. `python main.py providers`
+lists every role's chain and what each alternative needs; `--check` makes one real call per
+role to verify keys.
+
+Measured: the keyless Pollinations endpoint 429s on parallel requests (1 per IP confirmed by
+experiment), so parallelism only pays off with Cloudflare or a local model. Live M2 run
+(24 s, 3 scenes): 397 s, TTS lines 4-up in 5.3 s, 664/664 frames, edits and revert unchanged.
 **Not yet verified against live Gemini/Groq/Cloudflare APIs** — no keys on this machine;
 adapters are covered by mocked tests.
 
