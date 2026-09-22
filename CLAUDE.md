@@ -154,6 +154,9 @@ adapters are covered by mocked tests.
   every portrait prompt; "change character design" re-rolls and persists them.
 - **Benchmark**: `scripts/benchmark.py` reports per-phase time, length vs target, frame-exact
   sync, lines-on-cuts and which provider served each image; `--offline` runs anywhere.
+  Its first real run found the planner's speaking-rate estimate was wrong (films came out
+  ~17% long); calibrating WORDS_PER_SECOND 2.6 -> 2.2 against measured edge-tts brought a
+  24 s target to 23.5 s (2.1% error). Latest run in docs/BENCHMARK.md.
 
 ## Known issues / next milestones
 
