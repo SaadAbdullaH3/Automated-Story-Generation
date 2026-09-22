@@ -11,6 +11,7 @@ from typing import Callable, Dict, Iterator, List, Optional
 from agents.audio_agent import AudioAgent
 from agents.story_agent import StoryAgent
 from agents.video_agent import VideoAgent
+from shared.constants import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH
 from shared.schemas.pipeline import PipelineState
 from shared.timeline import LINE_GAP_MS, SCENE_PREROLL_MS, SCENE_TAIL_MS, estimate_line_ms
 from shared.utils.ids import new_project_id
@@ -56,6 +57,9 @@ class PipelineOrchestrator:
         project_id: Optional[str] = None,
         use_text_to_video: Optional[bool] = None,
         use_lip_sync: Optional[bool] = None,
+        width: int = DEFAULT_WIDTH,
+        height: int = DEFAULT_HEIGHT,
+        fps: int = DEFAULT_FPS,
     ) -> PipelineState:
         project_id = project_id or new_project_id()
         state = PipelineState(project_id=project_id, user_prompt=prompt)
@@ -68,6 +72,7 @@ class PipelineOrchestrator:
             subtitle_language=subtitle_language,
             use_text_to_video=use_text_to_video,
             use_lip_sync=use_lip_sync,
+            width=width, height=height, fps=fps,
         )
 
         graph = self._build_graph()

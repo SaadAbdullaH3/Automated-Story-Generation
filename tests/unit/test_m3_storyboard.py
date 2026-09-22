@@ -176,3 +176,37 @@ def test_storyboard_api_404s_for_unknown_projects(isolated_dirs):
     assert client.get("/api/pipeline/storyboard/nope").status_code == 404
     assert client.post("/api/pipeline/render/nope", json={}).status_code == 404
     assert client.patch("/api/pipeline/storyboard/nope/scene_1", json={}).status_code == 404
+
+
+# ---- benchmark harness ------------------------------------------------------
+
+def test_benchmark_runs_offline_and_reports(tmp_path, monkeypatch, isolated_dirs):
+    """The harness must produce comparable numbers without any network."""
+    import importlib.util
+    import json
+    import sys
+
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location("benchmark", root / "scripts" / "benchmark.py")
+    bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bench)
+
+    monkeypatch.setattr(bench, "ROOT", tmp_path)          # write reports into the temp dir
+    monkeypatch.setattr(bench, "_offline", lambda: None)  # conftest already forces offline
+    monkeypatch.setenv("PROVIDER_TTS", "silent")
+    monkeypatch.setattr(sys, "argv", [
+        "benchmark.py", "--offline", "--prompts", "1", "--duration", "20", "--scenes", "2",
+        "--no-subs", "--width", "160", "--height", "90", "--fps", "12",
+        "--out", str(tmp_path / "report.md"),
+    ])
+    assert bench.main() == 0                              # non-zero would mean out of sync
+
+    report = json.loads(next((tmp_path / "data" / "benchmarks").glob("*.json"))
+                        .read_text(encoding="utf-8"))
+    run = report["runs"][0]
+    assert run["in_sync"] and run["frames_actual"] == run["frames_expected"]
+    assert run["lines_on_a_cut"] == run["lines"]
+    assert run["fallback_images"] == 0                    # the chosen provider served everything
+    assert run["duration_error_pct"] < 25
+    assert report["totals"]["all_in_sync"] is True
+    assert "| prompt |" in (tmp_path / "report.md").read_text(encoding="utf-8")
