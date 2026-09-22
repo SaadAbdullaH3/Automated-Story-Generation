@@ -61,6 +61,97 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_storyboard(state) -> None:
+    board = state.storyboard
+    print()
+    print("=" * 74)
+    print(f"STORYBOARD  {state.project_id}   v{state.version}")
+    if board:
+        print(f"  {board.title} — {board.logline}")
+        print(f"  {len(board.frames)} scenes, about "
+              f"{board.estimated_duration_ms() / 1000:.0f}s")
+    print("=" * 74)
+    for frame in (board.frames if board else []):
+        print(f"\n  [{frame.scene_id}] {frame.title}")
+        print(f"      setting : {frame.setting}")
+        print(f"      visual  : {frame.visual_prompt[:100]}")
+        if frame.preview_path:
+            print(f"      preview : {frame.preview_path}")
+        for line in frame.dialogue:
+            print(f"      {line.character_name or line.character_id:<12} {line.text[:64]}")
+    print()
+    print("-" * 74)
+    print(f"Edit a scene:  python main.py restyle {state.project_id} <scene_id> "
+          f'--visual "..."')
+    print(f"Render it:     python main.py render {state.project_id}")
+    print()
+
+
+def cmd_plan(args: argparse.Namespace) -> int:
+    """Write the script + preview images, then stop for review."""
+    orch = PipelineOrchestrator()
+    print(f"\n>>> planning storyboard for:\n    {args.prompt}\n")
+    state = orch.plan(
+        prompt=args.prompt,
+        target_duration_s=args.duration,
+        scene_count=args.scenes,
+        with_preview=not args.no_preview,
+        on_event=_print_event,
+    )
+    _print_storyboard(state)
+    return 0
+
+
+def cmd_storyboard(args: argparse.Namespace) -> int:
+    state = StateManager().latest(args.project_id)
+    if not state or not state.script:
+        print(f"no storyboard for {args.project_id}")
+        return 1
+    _print_storyboard(state)
+    return 0
+
+
+def cmd_restyle(args: argparse.Namespace) -> int:
+    """Edit one storyboard scene before rendering."""
+    orch = PipelineOrchestrator()
+    dialogue = dict(pair.split("=", 1) for pair in args.line) if args.line else None
+    try:
+        state = orch.update_storyboard(
+            args.project_id, args.scene_id, title=args.title, setting=args.setting,
+            visual_prompt=args.visual, dialogue=dialogue,
+        )
+    except ValueError as e:
+        print(f"error: {e}")
+        return 1
+    _print_storyboard(state)
+    return 0
+
+
+def cmd_render(args: argparse.Namespace) -> int:
+    """Render an approved storyboard into the finished film."""
+    orch = PipelineOrchestrator()
+    print(f"\n>>> rendering {args.project_id}\n")
+    try:
+        state = orch.render(
+            args.project_id,
+            with_bgm=not args.no_bgm,
+            with_subtitles=not args.no_subs,
+            subtitle_language=args.subtitle_lang,
+            use_text_to_video=False if args.no_real_video else None,
+            use_lip_sync=False if args.no_lipsync else None,
+            on_event=_print_event,
+        )
+    except ValueError as e:
+        print(f"error: {e}")
+        return 1
+    print()
+    print("=" * 70)
+    print(f"DONE: project={state.project_id} version={state.version}")
+    if state.video:
+        print(f"VIDEO: {state.video.final_video_path}")
+    return 0
+
+
 def cmd_providers(_args: argparse.Namespace) -> int:
     """Show which model serves each role, and what the alternatives need."""
     from shared import providers
@@ -230,7 +321,8 @@ def cmd_list(args: argparse.Namespace) -> int:
     for pid in pids:
         s = sm.latest(pid)
         title = s.script.story.title if s and s.script else "(untitled)"
-        print(f"  {pid}  v{s.version if s else '-'}  {title}")
+        stage = s.stage if s else "-"
+        print(f"  {pid}  v{s.version if s else '-'}  {stage:<10}  {title}")
     return 0
 
 
@@ -250,6 +342,38 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--no-lipsync", action="store_true",
                     help="force heuristic lip sync even if FAL_KEY is set")
     rp.set_defaults(fn=cmd_run)
+
+    # ---- storyboard workflow: plan -> review/edit -> render ----------------
+    pl = sub.add_parser("plan", help="write the script + preview images, then stop for review")
+    pl.add_argument("prompt")
+    pl.add_argument("--duration", type=int, default=40)
+    pl.add_argument("--scenes", type=int, default=4)
+    pl.add_argument("--no-preview", action="store_true",
+                    help="skip the preview images (script only)")
+    pl.set_defaults(fn=cmd_plan)
+
+    sb = sub.add_parser("storyboard", help="show a project's storyboard")
+    sb.add_argument("project_id")
+    sb.set_defaults(fn=cmd_storyboard)
+
+    rs = sub.add_parser("restyle", help="edit one storyboard scene before rendering")
+    rs.add_argument("project_id")
+    rs.add_argument("scene_id")
+    rs.add_argument("--title")
+    rs.add_argument("--setting")
+    rs.add_argument("--visual", help="new visual prompt (redraws the preview)")
+    rs.add_argument("--line", action="append", metavar="LINE_ID=TEXT",
+                    help="rewrite a line, e.g. --line scene_1_l1='Hello there'")
+    rs.set_defaults(fn=cmd_restyle)
+
+    rd = sub.add_parser("render", help="render an approved storyboard into the film")
+    rd.add_argument("project_id")
+    rd.add_argument("--no-bgm", action="store_true")
+    rd.add_argument("--no-subs", action="store_true")
+    rd.add_argument("--subtitle-lang", default="English")
+    rd.add_argument("--no-real-video", action="store_true")
+    rd.add_argument("--no-lipsync", action="store_true")
+    rd.set_defaults(fn=cmd_render)
 
     pp = sub.add_parser("providers", help="show which model serves each role")
     pp.add_argument("--check", action="store_true",
@@ -278,7 +402,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     if len(sys.argv) > 1 and sys.argv[1] not in (
-        "run", "serve", "edit", "history", "list", "providers", "-h", "--help"
+        "run", "plan", "storyboard", "restyle", "render", "serve", "edit",
+        "history", "list", "providers", "-h", "--help"
     ):
         # Treat first arg as a prompt for convenience.
         args = parser.parse_args(["run"] + sys.argv[1:])

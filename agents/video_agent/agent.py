@@ -36,6 +36,7 @@ from shared.languages import canonical
 from shared.schemas.audio import AudioSegment, SceneTiming
 from shared.schemas.pipeline import PipelineState
 from shared.schemas.story import Character, Scene
+from shared.schemas.storyboard import Storyboard, StoryboardFrame, StoryboardLine
 from shared.schemas.video import CharacterPortrait, SceneFrame, Shot, VideoOutput
 from shared.timeline import (
     SCENE_XFADE_MS, SHOT_XFADE_MS, build_timeline, span_frames, split_span,
@@ -264,6 +265,65 @@ class VideoAgent:
         log.info("  portrait: %s -> %s (%s)", c.name, out.name,
                  res.metadata.get("provider") if res.success else res.error)
         return CharacterPortrait(character_id=c.id, image_path=res.data if res.success else str(out))
+
+    def generate_storyboard(self, state: PipelineState, width: int = 512, height: int = 288,
+                            scene_ids: Optional[List[str]] = None) -> Storyboard:
+        """One small preview image per scene, for approval before the real render.
+
+        A preview costs a single image; a full render costs three per scene plus
+        portraits, every voice line and all the video work.
+        """
+        script = state.script
+        board = state.storyboard or Storyboard(
+            project_id=state.project_id, prompt=state.user_prompt,
+            title=script.story.title, logline=script.story.logline,
+            preview_width=width, preview_height=height,
+        )
+        names = {c.id: c.name for c in script.characters.characters}
+        targets = [s for s in script.scenes if not scene_ids or s.scene_id in scene_ids]
+        previews = run_jobs(
+            [(self._generate_preview, (state.project_id, scene, width, height))
+             for scene in targets],
+            workers=providers.concurrency("image"), label="storyboard previews",
+        )
+        preview_by_scene = dict(zip([s.scene_id for s in targets], previews))
+
+        frames = []
+        for scene in script.scenes:
+            existing = board.frame(scene.scene_id)
+            frames.append(StoryboardFrame(
+                scene_id=scene.scene_id, index=scene.index, title=scene.title,
+                setting=scene.setting, visual_prompt=scene.visual_prompt,
+                preview_path=preview_by_scene.get(
+                    scene.scene_id, existing.preview_path if existing else None),
+                dialogue=[StoryboardLine(line_id=ln.line_id, character_id=ln.character_id,
+                                         character_name=names.get(ln.character_id, ""),
+                                         text=ln.text)
+                          for ln in scene.dialogue],
+                estimated_ms=scene.duration_ms,
+            ))
+        board.frames = frames
+        board.title, board.logline = script.story.title, script.story.logline
+        board.touch()
+        state.storyboard = board
+        state.stage = "storyboard" if state.stage == "draft" else state.stage
+        return board
+
+    def _generate_preview(self, project_id: str, scene: Scene,
+                          width: int, height: int) -> str:
+        out = project_dir(project_id) / "video" / "storyboard" / f"{scene.scene_id}.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        prompt = f"anime scene of {scene.visual_prompt}, {BANK_FRAMINGS[0][1]}"
+        res = self.tools.execute(
+            "vision.generate_image", prompt=prompt, out_path=str(out),
+            width=width, height=height, style=SCENE_STYLE,
+            negative_prompt=SCENE_NEGATIVE,
+            # A new prompt gives a new preview; the same prompt reuses the look.
+            seed=_seed(prompt, ""),
+        )
+        log.info("  storyboard %s -> %s (%s)", scene.scene_id, out.name,
+                 res.metadata.get("provider") if res.success else res.error)
+        return res.data if res.success else str(out)
 
     def generate_shot_bank(self, project_id: str, scene: Scene, width: int, height: int,
                            seed_salt: str = "") -> List[str]:

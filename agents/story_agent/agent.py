@@ -129,6 +129,11 @@ class StoryAgent:
             log.exception("phase 1 failed")
             raise
 
+    def serialize(self, state: PipelineState) -> list[str]:
+        """Re-write the script artifacts after an edit and refresh artifact paths."""
+        state.phase1.artifact_paths = self._serialize(state.project_id, state.script)
+        return state.phase1.artifact_paths
+
     # ---- generation ------------------------------------------------------
 
     def _generate(self, project_id: str, prompt: str,
