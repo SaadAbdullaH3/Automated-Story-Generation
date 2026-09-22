@@ -285,7 +285,10 @@ class VideoAgent:
             preview_width=width, preview_height=height,
         )
         names = {c.id: c.name for c in script.characters.characters}
-        targets = [s for s in script.scenes if not scene_ids or s.scene_id in scene_ids]
+        # scene_ids=None redraws every preview; an empty list redraws none
+        # (a text-only edit shouldn't spend images).
+        targets = [s for s in script.scenes
+                   if scene_ids is None or s.scene_id in scene_ids]
         previews = run_jobs(
             [(self._generate_preview, (state.project_id, scene, width, height))
              for scene in targets],

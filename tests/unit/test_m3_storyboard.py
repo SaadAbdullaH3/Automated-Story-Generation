@@ -77,6 +77,8 @@ def test_editing_dialogue_updates_the_script_and_its_estimate(orchestrator):
     scene = next(s for s in state.script.scenes if s.dialogue)
     line = scene.dialogue[0]
     before = scene.duration_ms
+    stamps = {f.scene_id: Path(f.preview_path).stat().st_mtime_ns
+              for f in state.storyboard.frames}
 
     long_line = "The shelves moved again, and this time they spelled a street I walked as a child."
     updated = orchestrator.update_storyboard(
@@ -86,6 +88,9 @@ def test_editing_dialogue_updates_the_script_and_its_estimate(orchestrator):
     assert new_scene.dialogue[0].text == long_line
     assert new_scene.duration_ms != before                   # re-estimated
     assert updated.storyboard.frame(scene.scene_id).dialogue[0].text == long_line
+    # A text-only edit must not spend images on redrawing previews.
+    assert {f.scene_id: Path(f.preview_path).stat().st_mtime_ns
+            for f in updated.storyboard.frames} == stamps
 
 
 @pytest.mark.parametrize("kwargs,message", [
