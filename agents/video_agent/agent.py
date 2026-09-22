@@ -29,6 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from agents.story_agent.appearance import build_appearance_lock, character_seed
 from mcp.tool_executor import ToolExecutor
 from shared import providers
 from shared.constants import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH, PHASE_VIDEO
@@ -252,15 +253,19 @@ class VideoAgent:
         """(Re)generate one character's close-up portrait."""
         out = project_dir(project_id) / "video" / "portraits" / f"{c.id}.png"
         out.parent.mkdir(parents=True, exist_ok=True)
+        # The appearance lock (not the raw description) keeps the face stable.
+        look = c.appearance_lock or build_appearance_lock(c)
         prompt = (
-            f"anime style close-up portrait of {c.name}, {c.visual_description}, "
+            f"anime style close-up portrait of {look}, "
             f"{c.role}, expressive face, large detailed eyes, looking at camera, "
             f"vibrant colors, cel-shaded, clean line art, soft anime lighting"
         )
+        seed = character_seed(c, seed_salt) if seed_salt else (
+            c.image_seed if c.image_seed is not None else character_seed(c))
         res = self.tools.execute(
             "vision.generate_image", prompt=prompt, out_path=str(out),
             width=width, height=height, style=PORTRAIT_STYLE,
-            negative_prompt=PORTRAIT_NEGATIVE, seed=_seed(prompt, seed_salt),
+            negative_prompt=PORTRAIT_NEGATIVE, seed=seed,
         )
         log.info("  portrait: %s -> %s (%s)", c.name, out.name,
                  res.metadata.get("provider") if res.success else res.error)
