@@ -1,23 +1,24 @@
-"""Image-generation tool.
+"""Image generation, driven by the `image` role in config/providers.yaml.
 
-Provider precedence (when LOCAL_SD=1, local diffusers wins; otherwise default):
-1. Local Diffusers SDXL Turbo  (LOCAL_SD=1, fastest local — uses CUDA GPU)
-2. Stable Diffusion WebUI       (SD_API_URL set — Automatic1111 HTTP API)
-3. Pollinations.ai              (default; POLLINATIONS_API_KEY -> gen.pollinations.ai,
-                                 otherwise the legacy keyless endpoint, which
-                                 serves a weaker model at reduced size)
-4. OpenAI image API             (OPENAI_API_KEY + POLLINATIONS_DISABLE=1)
-5. PIL placeholder              (offline gradient fallback)
+Providers are tried in the order the config lists them (Cloudflare FLUX, local
+Stable Diffusion, an SD WebUI, Pollinations, OpenAI, and finally an offline PIL
+placeholder). Whatever a provider returns is validated, cover-fitted to the
+requested size and saved in the requested format, so a provider error page can
+never end up on screen as a picture.
 """
 from __future__ import annotations
+import base64
 import hashlib
 import os
+import time
 import urllib.parse
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
 from mcp.base_tool import BaseTool, ToolResult
+from shared import providers
+from shared.providers import ProviderSpec
 from shared.utils.logging import get_logger
 
 log = get_logger("image_gen")
@@ -30,7 +31,7 @@ _DIFFUSERS_PIPE = None
 
 class ImageGenTool(BaseTool):
     name = "vision.generate_image"
-    description = "Generate an image from a text prompt (Pollinations / OpenAI / SD / PIL fallback)."
+    description = "Generate an image from a text prompt using the configured image providers."
     category = "vision"
 
     def run(self, prompt: str, out_path: str, width: int = 1280, height: int = 720,
@@ -44,53 +45,35 @@ class ImageGenTool(BaseTool):
         full_prompt = f"{prompt}, {style}".strip(", ") if style else prompt
         seed = seed or int(hashlib.md5(prompt.encode()).hexdigest()[:8], 16) % 2**31
 
-        # 1. Local Diffusers SDXL Turbo (fastest if user has CUDA GPU)
-        if os.getenv("LOCAL_SD") == "1":
-            try:
-                self._diffusers_sdxl_turbo(full_prompt, negative_prompt,
-                                           out, width, height, seed)
-                return ToolResult(success=True, data=str(out),
-                                  metadata={"provider": "diffusers_sdxl_turbo",
-                                            "seed": seed})
-            except Exception as e:  # noqa: BLE001
-                log.warning("local diffusers failed (%s) — trying next provider", e)
-
-        # 2. Stable Diffusion WebUI (Automatic1111 HTTP API)
-        if os.getenv("SD_API_URL"):
-            try:
-                self._stable_diffusion(full_prompt, negative_prompt, out, width, height, seed)
-                return ToolResult(success=True, data=str(out),
-                                  metadata={"provider": "stable_diffusion", "seed": seed})
-            except Exception as e:  # noqa: BLE001
-                log.warning("stable diffusion failed (%s) — trying next provider", e)
-
-        # 3. Pollinations.ai (free default)
-        if os.getenv("POLLINATIONS_DISABLE") != "1":
-            try:
-                meta = self._pollinations(full_prompt, out, width, height, seed)
-                return ToolResult(success=True, data=str(out),
-                                  metadata={"provider": "pollinations", "seed": seed, **meta})
-            except Exception as e:  # noqa: BLE001
-                log.warning("pollinations failed (%s) — trying next provider", e)
-
-        # 4. OpenAI image gen
-        if os.getenv("OPENAI_API_KEY"):
-            try:
-                self._openai_images(full_prompt, out, width, height)
-                return ToolResult(success=True, data=str(out),
-                                  metadata={"provider": "openai", "seed": seed})
-            except Exception as e:  # noqa: BLE001
-                log.warning("openai image gen failed (%s) — using PIL placeholder", e)
-
-        # 5. PIL placeholder
-        self._pil_placeholder(prompt, out, width, height, seed)
-        return ToolResult(success=True, data=str(out),
-                          metadata={"provider": "pil_placeholder", "seed": seed})
+        errors = []
+        for spec in providers.chain("image"):
+            handler = getattr(self, f"_provider_{spec.provider}", None)
+            if handler is None:
+                log.warning("unknown image provider '%s' in config — skipping", spec.provider)
+                continue
+            # Free endpoints hiccup (429s, 500s); retry before giving up on them.
+            for attempt in range(spec.retries):
+                try:
+                    meta = handler(spec, full_prompt, negative_prompt, out,
+                                   width, height, seed) or {}
+                    return ToolResult(success=True, data=str(out),
+                                      metadata={"provider": spec.provider, "model": spec.model,
+                                                "seed": seed, "attempt": attempt + 1, **meta})
+                except Exception as e:  # noqa: BLE001
+                    errors.append(f"{spec.provider}: {e}")
+                    last = attempt == spec.retries - 1 or _is_permanent(e)
+                    log.warning("image provider %s failed (attempt %d/%d: %s)%s",
+                                spec.provider, attempt + 1, spec.retries, str(e)[:200],
+                                "" if last else " — retrying")
+                    if last:
+                        break
+                    time.sleep(1.5 * (attempt + 1))
+        return ToolResult(success=False, error="; ".join(errors) or "no image provider configured")
 
     # ---- providers -------------------------------------------------------
 
-    def _diffusers_sdxl_turbo(self, prompt: str, negative: str, out: Path,
-                              w: int, h: int, seed: int) -> None:
+    def _provider_local_sd(self, spec: ProviderSpec, prompt: str, negative: str, out: Path,
+                           w: int, h: int, seed: int) -> dict:
         """Local Stable Diffusion via the diffusers library.
 
         Tries (in order) SDXL-Turbo with sequential offload, then SD 1.5 as
@@ -109,7 +92,7 @@ class ImageGenTool(BaseTool):
         if _DIFFUSERS_PIPE is None:
             import torch
             from diffusers import AutoPipelineForText2Image
-            model_id = os.getenv("LOCAL_SD_MODEL", "stabilityai/sdxl-turbo")
+            model_id = os.getenv("LOCAL_SD_MODEL", spec.model or "stabilityai/sdxl-turbo")
             log.info("loading %s (first call may take 30-90s)...", model_id)
 
             try:
@@ -155,7 +138,7 @@ class ImageGenTool(BaseTool):
             result = _DIFFUSERS_PIPE(
                 prompt=prompt,
                 negative_prompt=negative or None,
-                num_inference_steps=int(os.getenv("LOCAL_SD_STEPS", "4")),
+                num_inference_steps=int(os.getenv("LOCAL_SD_STEPS", spec.params.get("steps", 4))),
                 guidance_scale=0.0,                 # Turbo is trained for CFG=0
                 width=target_w, height=target_h,
                 generator=gen,
@@ -167,7 +150,7 @@ class ImageGenTool(BaseTool):
             result = _DIFFUSERS_PIPE(
                 prompt=prompt,
                 negative_prompt=negative or None,
-                num_inference_steps=int(os.getenv("LOCAL_SD_STEPS", "4")),
+                num_inference_steps=int(os.getenv("LOCAL_SD_STEPS", spec.params.get("steps", 4))),
                 guidance_scale=0.0,
                 width=target_w, height=target_h,
                 generator=gen,
@@ -183,8 +166,10 @@ class ImageGenTool(BaseTool):
             from PIL import Image
             img = img.resize((w, h), Image.LANCZOS)
         img.save(out)
+        return {"model": model_id, "native_size": [target_w, target_h]}
 
-    def _pollinations(self, prompt: str, out: Path, w: int, h: int, seed: int) -> dict:
+    def _provider_pollinations(self, spec: ProviderSpec, prompt: str, negative: str,
+                               out: Path, w: int, h: int, seed: int) -> dict:
         """Pollinations image generation. Returns metadata about what was served.
 
         With POLLINATIONS_API_KEY (free account at enter.pollinations.ai) this
@@ -196,7 +181,7 @@ class ImageGenTool(BaseTool):
         encoded = urllib.parse.quote(prompt)
         key = os.getenv("POLLINATIONS_API_KEY")
         if key:
-            model = os.getenv("POLLINATIONS_MODEL", "tongyi-mai/z-image-turbo")
+            model = os.getenv("POLLINATIONS_MODEL", spec.model or "tongyi-mai/z-image-turbo")
             url = (f"https://gen.pollinations.ai/image/{encoded}"
                    f"?model={urllib.parse.quote(model, safe='')}&width={w}&height={h}&seed={seed}")
             r = requests.get(url, headers={"Authorization": f"Bearer {key}"}, timeout=120)
@@ -222,25 +207,60 @@ class ImageGenTool(BaseTool):
         return {"endpoint": endpoint, "requested_model": model,
                 "served_model": served or model, "native_size": list(native)}
 
-    def _openai_images(self, prompt: str, out: Path, w: int, h: int) -> None:
+    def _provider_cloudflare(self, spec: ProviderSpec, prompt: str, negative: str, out: Path,
+                             w: int, h: int, seed: int) -> dict:
+        """Cloudflare Workers AI (free: 10,000 neurons/day, ~170 FLUX images).
+
+        FLUX schnell takes no size parameters and returns a square image, which
+        is cover-fitted to the project's aspect ratio.
+        """
+        import requests
+        account = os.environ["CLOUDFLARE_ACCOUNT_ID"]
+        model = spec.model or "@cf/black-forest-labs/flux-1-schnell"
+        payload = {"prompt": prompt[:2048], "seed": seed, **spec.params}
+        r = requests.post(
+            f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}",
+            headers={"Authorization": f"Bearer {os.environ['CLOUDFLARE_API_TOKEN']}",
+                     "Content-Type": "application/json"},
+            json=payload, timeout=180,
+        )
+        if r.status_code >= 400:
+            raise RuntimeError(f"HTTP {r.status_code}: {r.text[:300]}")
+        if r.headers.get("content-type", "").startswith("image/"):
+            data = r.content                      # some models answer with raw bytes
+        else:
+            body = r.json()
+            if not body.get("success", True):
+                raise RuntimeError(f"cloudflare error: {body.get('errors')}")
+            result = body.get("result", body)
+            image = result.get("image") if isinstance(result, dict) else None
+            if not image:
+                raise RuntimeError(f"no image in response: {str(body)[:200]}")
+            data = base64.b64decode(image)
+        native = _save_image_bytes(data, out, w, h)
+        return {"native_size": list(native)}
+
+    def _provider_openai(self, spec: ProviderSpec, prompt: str, negative: str, out: Path,
+                         w: int, h: int, seed: int) -> dict:
         from openai import OpenAI
         client = OpenAI()
         size = "1792x1024" if max(w, h) >= 1024 else "1024x1024"
-        resp = client.images.generate(model="dall-e-3", prompt=prompt, size=size, n=1)
+        resp = client.images.generate(model=spec.model or "dall-e-3", prompt=prompt,
+                                      size=size, n=1)
         import requests
         img_url = resp.data[0].url
         r = requests.get(img_url, timeout=60)
         r.raise_for_status()
-        _save_image_bytes(r.content, out, w, h)
+        native = _save_image_bytes(r.content, out, w, h)
+        return {"native_size": list(native)}
 
-    def _stable_diffusion(self, prompt: str, negative: str, out: Path,
-                          w: int, h: int, seed: int) -> None:
+    def _provider_sd_webui(self, spec: ProviderSpec, prompt: str, negative: str, out: Path,
+                           w: int, h: int, seed: int) -> dict:
         """Stable Diffusion WebUI (Automatic1111) HTTP API.
 
         Auto-detects SDXL Turbo by checking the loaded checkpoint name and
         switches to Turbo-optimal settings (4 steps, CFG 1, DPM++ SDE).
         """
-        import base64
         import requests
         api = os.environ["SD_API_URL"].rstrip("/")
 
@@ -268,9 +288,11 @@ class ImageGenTool(BaseTool):
         r = requests.post(f"{api}/sdapi/v1/txt2img", json=payload, timeout=300)
         r.raise_for_status()
         b64 = r.json()["images"][0]
-        _save_image_bytes(base64.b64decode(b64), out, w, h)
+        native = _save_image_bytes(base64.b64decode(b64), out, w, h)
+        return {"native_size": list(native), "turbo": is_turbo}
 
-    def _pil_placeholder(self, prompt: str, out: Path, w: int, h: int, seed: int) -> None:
+    def _provider_placeholder(self, spec: ProviderSpec, prompt: str, negative: str, out: Path,
+                              w: int, h: int, seed: int) -> dict:
         from PIL import Image, ImageDraw, ImageFont
         import random
         rng = random.Random(seed)
@@ -308,11 +330,19 @@ class ImageGenTool(BaseTool):
         )
         draw.text(((w - tw) // 2, h - th - 60), text, fill=(255, 255, 255), font=font)
         img.save(out)
+        return {"native_size": [w, h]}
 
 
 # ---- helpers ------------------------------------------------------------
 
 _WARNED: set = set()
+
+
+def _is_permanent(error: Exception) -> bool:
+    """Bad credentials or a rejected request won't succeed on a retry."""
+    text = str(error).lower()
+    return any(code in text for code in ("401", "403", "unauthorized", "forbidden",
+                                         "invalid api key", "400"))
 
 
 def _warn_once(key: str, msg: str, *args) -> None:

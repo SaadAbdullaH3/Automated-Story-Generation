@@ -209,7 +209,6 @@ def _extra_exchanges(label: str, prompt: str, rng: random.Random) -> list:
     Returns a list of (character_id, text, emotion, duration_ms) tuples.
     Each entry is ~3-5s of speech.
     """
-    p = prompt.strip().rstrip(".")
     common = [
         ("char_narrator",    "Time slowed, the way it always does in moments that matter.",                 "reflective",   4500),
         ("char_protagonist", "I've been waiting for something like this my whole life.",                    "wonder",       4000),

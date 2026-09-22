@@ -1,5 +1,10 @@
 # Project Report: Agentic AI — Animated Video Generation System
 
+> **Historical document.** This is the original FAST-NUCES semester submission and
+> describes the project as it stood then. The system has since moved on (one shared
+> timeline for audio/video/subtitles, a model settings layer, new providers), so for
+> current behaviour see [`Readme.md`](../Readme.md) and [`CLAUDE.md`](../CLAUDE.md).
+
 ## 1. System Design & Architecture
 
 The system implements a five-phase agentic pipeline that converts natural language prompts into polished short animated films. 

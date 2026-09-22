@@ -62,68 +62,112 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_providers(_args: argparse.Namespace) -> int:
-    """Print which providers are detected and what features are unlocked."""
-    from mcp.tools.llm_tools.llm_client import get_llm_client
-    llm = get_llm_client()
+    """Show which model serves each role, and what the alternatives need."""
+    from shared import providers
 
+    cfg = providers.load()
+    roles = providers.describe()
+
+    print()
+    print(f"Model settings  ({cfg.source})")
+    print("=" * 74)
+    for role, entries in roles.items():
+        active = next((e for e in entries if e["available"]), None)
+        label = f"{active['provider']}" + (f"  ({active['model']})" if active and active["model"]
+                                           else "") if active else "(nothing available)"
+        print()
+        print(f"  {role:<12} -> {label}")
+        for entry in entries:
+            if entry is active:
+                mark, note = "  *", "in use"
+            elif entry["available"]:
+                mark, note = "   ", "ready (fallback)"
+            else:
+                mark, note = "   ", "needs " + ", ".join(entry["missing"])
+            model = f" {entry['model']}" if entry["model"] else ""
+            print(f"  {mark} {entry['provider']:<14}{model:<34} {note}")
+
+    # Premium video tiers stay env-driven until M5 moves them into the config.
     fal = bool(os.getenv("FAL_KEY") or os.getenv("FAL_API_KEY"))
     rep = bool(os.getenv("REPLICATE_API_TOKEN"))
     hf = bool(os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY"))
-    eleven = bool(os.getenv("ELEVENLABS_API_KEY"))
-    sd = bool(os.getenv("SD_API_URL"))
-
-    def yn(b): return "[YES]" if b else "[ -- ]"
-
-    print()
-    print("Provider configuration")
-    print("-" * 60)
-    print(f"  LLM           : {llm.provider}  (model={llm.model})")
-    if llm.provider == "mock":
-        print("                   set GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY for real LLM")
-    local_sd = os.getenv("LOCAL_SD") == "1"
-    if local_sd:
-        img_line = f"local Diffusers ({os.getenv('LOCAL_SD_MODEL', 'stabilityai/sdxl-turbo')})  [primary]"
-    elif sd:
-        img_line = f"Stable Diffusion WebUI ({os.getenv('SD_API_URL')})  [primary]"
-    else:
-        img_line = (f"pollinations.ai ({os.getenv('POLLINATIONS_MODEL', 'tongyi-mai/z-image-turbo')})"
-                    if os.getenv("POLLINATIONS_API_KEY") else
-                    "pollinations.ai legacy keyless endpoint (reduced quality — "
-                    "set POLLINATIONS_API_KEY)")
-    if os.getenv("OPENAI_API_KEY"):
-        img_line += "  +  OpenAI"
-    print(f"  Image gen     : {img_line}")
-    print("  TTS           : edge-tts (default)  +  gTTS / pyttsx3 fallbacks"
-          + ("  +  ElevenLabs" if eleven else ""))
-    translate = "LLM" if llm.provider != "mock" else "MyMemory (free)"
-    print(f"  Subtitles     : translation via {translate}"
-          + ("  [MyMemory email set]" if os.getenv("MYMEMORY_EMAIL") else ""))
-
-    if fal:
-        t2v = "fal.ai (Stable Video Diffusion)"
-    elif rep:
-        t2v = "Replicate (SVD)"
-    elif hf:
-        t2v = "Hugging Face (DAMO text-to-video)"
-    else:
-        t2v = "(none configured)"
-
-    if fal:
-        ls = "fal.ai SadTalker"
-    elif rep:
-        ls = "Replicate Wav2Lip / SadTalker"
-    else:
-        ls = "heuristic mouth-zoom (offline fallback)"
-
-    print(f"  Text-to-video : {t2v}  {yn(fal or rep or hf)}")
-    print(f"  Lip sync      : {ls}  {yn(fal or rep)}")
     tier = "PREMIUM (real motion + real lip sync)" if (fal or rep) else "STANDARD (multi-shot ffmpeg)"
-    print(f"  Video tier    : {tier}")
     print()
-    print("-" * 60)
-    print("Setup guide: docs/REAL_VIDEO_SETUP.md")
+    print(f"  video tier   -> {tier}")
+    if not (fal or rep or hf):
+        print("     text-to-video / lip sync: none configured (see docs/REAL_VIDEO_SETUP.md)")
+
     print()
+    print("-" * 74)
+    print("Edit config/providers.yaml to change the order, models or parallelism.")
+    print("Free keys: aistudio.google.com/app/apikey (Gemini), console.groq.com (Groq),")
+    print("           dash.cloudflare.com (Workers AI), enter.pollinations.ai (images).")
+    print("Run `python main.py providers --check` to call each one for real.")
+    print()
+
+    if getattr(_args, "check", False):
+        return _check_providers()
     return 0
+
+
+def _check_providers() -> int:
+    """Make one tiny real call per role so credentials can be verified."""
+    import tempfile
+    import time
+
+    from mcp.tool_executor import ToolExecutor
+    from mcp.tools.llm_tools.llm_client import get_llm_client
+
+    print("Live check")
+    print("-" * 74)
+    failures = 0
+
+    for role in ("story", "edit_intent"):
+        client = get_llm_client(role, force_new=True)
+        if client.provider == "mock":
+            print(f"  {role:<12} skipped (no model configured)")
+            continue
+        started = time.monotonic()
+        resp = client.generate("Reply with exactly: OK", max_tokens=20, temperature=0)
+        elapsed = time.monotonic() - started
+        ok = resp.provider != "mock"
+        failures += 0 if ok else 1
+        answer = resp.text.strip().replace("\n", " ")[:40]
+        print(f"  {role:<12} {'OK ' if ok else 'FAILED'} via {resp.provider}"
+              f" ({resp.model}) in {elapsed:.1f}s: {answer!r}")
+
+    # Translation may be served by an LLM or by MyMemory, so use the tool itself.
+    started = time.monotonic()
+    res = ToolExecutor().execute("text.translate", lines=["Good evening."],
+                                 target_language="French")
+    elapsed = time.monotonic() - started
+    failures += 0 if res.success else 1
+    print(f"  {'translate':<12} {'OK ' if res.success else 'FAILED'} via "
+          f"{res.metadata.get('provider') if res.success else res.error} in {elapsed:.1f}s"
+          + (f": {res.data[0]!r}" if res.success else ""))
+
+    from shared import providers
+    image_spec = providers.active("image")
+    if image_spec:
+        with tempfile.TemporaryDirectory() as tmp:
+            started = time.monotonic()
+            res = ToolExecutor().execute(
+                "vision.generate_image", prompt="a red apple on a table",
+                out_path=f"{tmp}/probe.png", width=256, height=256,
+            )
+            elapsed = time.monotonic() - started
+            served = res.metadata.get("provider") if res.success else None
+            expected = served == image_spec.provider
+            failures += 0 if (res.success and expected) else 1
+            detail = f"served by {served}" if res.success else res.error
+            print(f"  {'image':<12} {'OK ' if expected else 'FELL BACK'} "
+                  f"(wanted {image_spec.provider}, {detail}) in {elapsed:.1f}s")
+
+    print()
+    print("All configured providers answered." if not failures
+          else f"{failures} role(s) did not use their preferred provider — see the log above.")
+    print()
+    return 1 if failures else 0
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -207,7 +251,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="force heuristic lip sync even if FAL_KEY is set")
     rp.set_defaults(fn=cmd_run)
 
-    pp = sub.add_parser("providers", help="show which API providers are detected")
+    pp = sub.add_parser("providers", help="show which model serves each role")
+    pp.add_argument("--check", action="store_true",
+                    help="also make one real call per role to verify credentials")
     pp.set_defaults(fn=cmd_providers)
 
     sp = sub.add_parser("serve", help="launch the FastAPI web app")

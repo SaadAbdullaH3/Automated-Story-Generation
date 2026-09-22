@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from mcp.tool_executor import ToolExecutor
+from shared import providers
 from shared.constants import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH, PHASE_VIDEO
 from shared.languages import canonical
 from shared.schemas.audio import AudioSegment, SceneTiming
@@ -41,6 +42,7 @@ from shared.timeline import (
     xfade_frames,
 )
 from shared.utils.files import project_dir, write_json
+from shared.utils.parallel import run_jobs
 from shared.utils.logging import get_logger
 
 from .animator import (
@@ -117,11 +119,19 @@ class VideoAgent:
             )
 
         try:
-            portraits = [self.generate_portrait(state.project_id, c, width, height)
-                         for c in state.script.characters.characters]
-            frames = [self._generate_scene_frame(state.project_id, scene, width, height,
-                                                 fps, use_text_to_video)
-                      for scene in state.script.scenes]
+            # Portraits and every scene's shot bank are independent: generate them
+            # as concurrently as the active image provider allows.
+            portraits = run_jobs(
+                [(self.generate_portrait, (state.project_id, c, width, height))
+                 for c in state.script.characters.characters],
+                workers=providers.concurrency("image"), label="portraits",
+            )
+            frames = run_jobs(
+                [(self._generate_scene_frame,
+                  (state.project_id, scene, width, height, fps, use_text_to_video))
+                 for scene in state.script.scenes],
+                workers=providers.concurrency("image"), label="scene images",
+            )
 
             lang = canonical(subtitle_language)
             if subtitle_language and not lang:

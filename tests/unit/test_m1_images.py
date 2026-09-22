@@ -31,9 +31,12 @@ def _jpeg(w: int, h: int, comment: bytes = b"") -> bytes:
 
 @pytest.fixture
 def pollinations(monkeypatch):
+    """Chain starting at Pollinations, with the placeholder still behind it."""
     import requests
-    monkeypatch.delenv("POLLINATIONS_DISABLE", raising=False)
-    monkeypatch.delenv("POLLINATIONS_API_KEY", raising=False)
+    monkeypatch.delenv("PROVIDER_IMAGE", raising=False)
+    for name in ("POLLINATIONS_API_KEY", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN",
+                 "LOCAL_SD", "SD_API_URL", "OPENAI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
     calls = []
 
     def install(resp):
@@ -63,7 +66,7 @@ def test_error_page_is_never_saved_as_an_image(tmp_path, pollinations):
     res = ToolExecutor().execute("vision.generate_image", prompt="a castle",
                                  out_path=str(tmp_path / "f.png"), width=320, height=180)
     assert res.success
-    assert res.metadata["provider"] == "pil_placeholder"   # fell through to the next provider
+    assert res.metadata["provider"] == "placeholder"   # fell through to the next provider
     assert Image.open(res.data).size == (320, 180)
 
 

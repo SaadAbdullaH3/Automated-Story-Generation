@@ -9,10 +9,10 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-# Force mock LLM provider for deterministic tests.
+# Force the offline providers so tests are deterministic and never hit the network:
+# mock LLM (template script + keyword classifier) and the PIL placeholder for images.
 os.environ.setdefault("LLM_PROVIDER", "mock")
-# Disable Pollinations.ai network call by default in tests so they're offline-safe.
-os.environ.setdefault("POLLINATIONS_DISABLE", "1")
+os.environ.setdefault("PROVIDER_IMAGE", "placeholder")
 # Only the languages a test asks for get subtitle tracks.
 os.environ.pop("SUBTITLE_EXTRA_LANGUAGES", None)
 

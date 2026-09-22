@@ -15,8 +15,12 @@ edge-tts>=7.0.0
 requests>=2.31
 deep-translator>=1.11.0   # free Google Translate fallback for multi-language subtitles
 
-# LLM providers (all optional — pip install only what you use)
-google-generativeai>=0.5; python_version>="3.9"
+# Model settings layer (config/providers.yaml)
+PyYAML>=6.0
+
+# LLM providers (all optional — pip install only what you use).
+# The openai client also speaks to Groq, OpenRouter and Ollama.
+google-genai>=1.51        # Gemini (replaces the deprecated google-generativeai)
 openai>=1.20
 anthropic>=0.25
 

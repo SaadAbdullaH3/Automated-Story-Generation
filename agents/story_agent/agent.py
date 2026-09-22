@@ -10,8 +10,6 @@ LangGraph implementation would look like.
 from __future__ import annotations
 from datetime import datetime
 
-from pydantic import ValidationError
-
 from mcp.tools.llm_tools.llm_client import get_llm_client
 from shared.constants import PHASE_STORY
 from shared.schemas.pipeline import PipelineState
@@ -102,7 +100,7 @@ Rules:
 
 class StoryAgent:
     def __init__(self):
-        self.llm = get_llm_client()
+        self.llm = get_llm_client("story")
 
     # ---- public ----------------------------------------------------------
 

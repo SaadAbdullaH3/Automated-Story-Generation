@@ -10,8 +10,8 @@ class TextGeneratorTool(BaseTool):
     category = "llm"
 
     def run(self, prompt: str, system: str = "", temperature: float = 0.7,
-            max_tokens: int = 2000, **_) -> ToolResult:
-        client = get_llm_client()
+            max_tokens: int = 2000, role: str = "story", **_) -> ToolResult:
+        client = get_llm_client(role)
         resp = client.generate(prompt=prompt, system=system,
                                temperature=temperature, max_tokens=max_tokens)
         return ToolResult(
