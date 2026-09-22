@@ -40,9 +40,12 @@ The default TTS engine shells out to the `edge-tts` CLI, which lives in
 ## Commands
 
 ```bash
-python -m pytest -q                        # full suite (~1 min, offline: mock LLM, no Pollinations)
+python -m pytest -q                        # full suite (~3.5 min, offline: mock LLM + placeholder images)
 python -m pytest tests/unit/test_phase5_edit.py -q
 python main.py "prompt" --duration 30 --scenes 4   # CLI end-to-end run
+python main.py plan "prompt" --scenes 4            # storyboard only (cheap)
+python main.py storyboard|restyle|render <pid>     # review, edit, then render
+python scripts/benchmark.py --offline              # fixed prompts, measured
 python main.py providers                   # which providers are detected
 python main.py serve --reload              # web UI on http://localhost:8000
 python main.py edit <project_id>           # interactive edit REPL
@@ -58,7 +61,8 @@ Outputs go to `data/outputs/<project_id>/`, version snapshots to
 |---|---|---|
 | Cross-phase contract | `shared/schemas/` | Pydantic models. `PipelineState` is the object passed between phases and versioned. Change these carefully: every phase depends on them. |
 | Orchestrator | `agents/orchestrator/` | Plain-Python graph (not LangGraph) running phase1 → phase2 → phase3, emitting `ProgressEvent`s. |
-| Phase 1 | `agents/story_agent/` | LLM structured output → `ScriptOutput`; `planner.py` is the deterministic template used when the LLM is `mock`. |
+| Phase 1 | `agents/story_agent/` | LLM structured output → `ScriptOutput`; `planner.py` is the deterministic template used when the LLM is `mock`; `appearance.py` locks each character's look + image seed. |
+| Storyboard | `shared/schemas/storyboard.py` + orchestrator `plan`/`update_storyboard`/`render` | The cheap draft (script + one preview image per scene) that is reviewed and edited before the expensive render. `PipelineState.stage` is draft → storyboard → rendered. |
 | Timeline | `shared/timeline.py` | **Single source of truth for timing.** Audio places lines on it, video cuts on its boundaries (absolute ms → frames), subtitles read it. Never time video or audio independently. |
 | Phase 2 | `agents/audio_agent/` | `render_line` (TTS) → `retime` (timeline) → `remix` (per-scene BGM + master with lines placed at `start_ms`). Edits reuse these. |
 | Phase 3 | `agents/video_agent/` | `run`: portraits + 3-image shot bank per scene. `compose`: plan shots from the timeline → render changed scenes only (`plan_signature`) → scene crossfades → master mux → speed → soft-sub tracks. Edits call `compose`. |
@@ -138,13 +142,31 @@ experiment), so parallelism only pays off with Cloudflare or a local model. Live
 **Not yet verified against live Gemini/Groq/Cloudflare APIs** — no keys on this machine;
 adapters are covered by mocked tests.
 
+## M3 results (2026-09-22)
+
+136/136 tests pass. Quality milestone:
+- **Mix**: music side-chains to the dialogue (measured ~6 dB duck while a line plays,
+  recovering over the next second) so the bed sits louder (0.18 → 0.32); every master is
+  normalised to -16 LUFS.
+- **Storyboard**: `plan` (script + one preview per scene) → review/edit → `render`, in CLI,
+  API and UI, each step snapshotted. Verified end to end in the browser.
+- **Character consistency**: `appearance_lock` + fixed `image_seed` per character, used by
+  every portrait prompt; "change character design" re-rolls and persists them.
+- **Benchmark**: `scripts/benchmark.py` reports per-phase time, length vs target, frame-exact
+  sync, lines-on-cuts and which provider served each image; `--offline` runs anywhere.
+  Its first real run found the planner's speaking-rate estimate was wrong (films came out
+  ~17% long); calibrating WORDS_PER_SECOND 2.6 -> 2.2 against measured edge-tts brought a
+  24 s target to 23.5 s (2.1% error). Latest run in docs/BENCHMARK.md.
+
 ## Known issues / next milestones
 
 - Live API verification for Gemini / Groq / Cloudflare is pending free keys from the owner.
 - Without any image key, images still come from the legacy Pollinations endpoint (`sana`,
   ~1024x576, ~40 s each, one at a time). Cloudflare or local Z-Image fixes both.
-- Voices are still edge-tts only; Kokoro / Chatterbox and ACE-Step music are M3 candidates
-  (both need a torch install, so they stay optional).
+- Voices are still edge-tts only; Kokoro / Chatterbox voices and ACE-Step music need a
+  ~2-3 GB torch install, so they stay optional (deferred again from M3).
+- Storyboard previews are drawn at 512x288 and thrown away at render time; reusing them as
+  the wide shot would save one image per scene.
 - The web player can't show MP4 soft subtitles; the UI needs `<track>` WebVTT files (M4 frontend).
 - Snapshots copy every file per version — storage grows quickly (M4: content-addressed storage).
 - Scene-scoped voice edits apply to that scene only until a later global audio edit re-renders it.

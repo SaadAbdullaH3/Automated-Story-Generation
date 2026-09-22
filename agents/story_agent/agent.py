@@ -18,6 +18,7 @@ from shared.timeline import SCENE_PREROLL_MS, SCENE_TAIL_MS, WORDS_PER_SECOND
 from shared.utils.files import project_dir, write_json
 from shared.utils.logging import get_logger
 
+from .appearance import lock_appearances
 from .planner import template_script
 
 log = get_logger("story_agent")
@@ -115,6 +116,8 @@ class StoryAgent:
             script = self._generate(state.project_id, state.user_prompt,
                                     target_duration_s, scene_count)
             self._validate(script)
+            # Pin each character's look before any image is drawn.
+            lock_appearances(script)
             artifacts = self._serialize(state.project_id, script)
             state.script = script
             state.phase1.status = "complete"
@@ -128,6 +131,11 @@ class StoryAgent:
             state.phase1.error = f"{type(e).__name__}: {e}"
             log.exception("phase 1 failed")
             raise
+
+    def serialize(self, state: PipelineState) -> list[str]:
+        """Re-write the script artifacts after an edit and refresh artifact paths."""
+        state.phase1.artifact_paths = self._serialize(state.project_id, state.script)
+        return state.phase1.artifact_paths
 
     # ---- generation ------------------------------------------------------
 

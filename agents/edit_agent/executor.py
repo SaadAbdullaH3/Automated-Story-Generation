@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 from agents.audio_agent import AudioAgent
+from agents.story_agent.appearance import build_appearance_lock, character_seed
 from agents.video_agent import VideoAgent
 from mcp.tool_executor import ToolExecutor
 from shared.schemas.audio import VoiceConfig
@@ -191,17 +192,24 @@ class EditExecutor:
         else:
             char_ids = {c.id for c in state.script.characters.characters if c.role != "narrator"}
         affected: List[str] = []
+        salt = f"v{state.version + 1}"
         for c in state.script.characters.characters:
             if c.id not in char_ids:
                 continue
-            new = self.video.generate_portrait(state.project_id, c, video.width, video.height,
-                                               seed_salt=f"v{state.version + 1}")
+            # Re-roll the locked look and keep it, so later re-renders don't
+            # quietly restore the old design.
+            c.appearance_lock = build_appearance_lock(c, salt)
+            c.image_seed = character_seed(c, salt)
+            new = self.video.generate_portrait(state.project_id, c, video.width, video.height)
             video.portraits = [new if p.character_id == c.id else p for p in video.portraits]
             if not video.portrait_for(c.id):
                 video.portraits.append(new)
             for frame in video.frames:
                 frame.portrait_overrides.pop(c.id, None)
             affected.append(new.image_path)
+        if affected:
+            from agents.story_agent import StoryAgent
+            StoryAgent().serialize(state)      # characters.json records the new look
         if not affected:
             raise ValueError(f"no character matches scope '{step.scope}'")
         return affected + self._recompose(state)
