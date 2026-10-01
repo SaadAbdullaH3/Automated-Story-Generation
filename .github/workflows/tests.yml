@@ -1,0 +1,71 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push supersedes the run already in flight for that branch.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux is what the container runs; Windows is what it is developed on.
+        # The two disagree about fonts and path separators, which is exactly
+        # the kind of thing that only shows up here.
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11"]
+        include:
+          - os: ubuntu-latest
+            python: "3.12"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install ffmpeg and fonts (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # ffmpeg does all the audio/video work. The Noto fonts are what stop
+          # burned-in Urdu and CJK subtitles rendering as blank boxes, and
+          # libgl1 is what opencv needs to import at all on a headless runner.
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg fontconfig fonts-dejavu-core fonts-noto-core libgl1
+
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --no-progress -y
+
+      - name: Check ffmpeg is on PATH
+        run: ffmpeg -version
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Every module imports
+        # A syntax error in a file no test touches should still fail the build.
+        run: python -m compileall -q agents backend jobs mcp shared state_manager main.py
+
+      - name: Tests
+        # The suite runs fully offline: the mock LLM writes the script and
+        # images are the local placeholder, so no key is needed and none of
+        # this spends anyone's quota.
+        run: python -m pytest -q --timeout=600
+        env:
+          PIPELINE_SKIP_DOTENV: "1"
