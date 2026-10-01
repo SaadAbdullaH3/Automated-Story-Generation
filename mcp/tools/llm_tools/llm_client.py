@@ -13,6 +13,7 @@ its offline fallback (the template script, the keyword classifier, ...).
 """
 from __future__ import annotations
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -26,9 +27,17 @@ from shared.utils.logging import get_logger
 
 log = get_logger("llm_client")
 
+# The SDK warns about automatic function calling on every plain generate_content.
+logging.getLogger("google_genai.models").setLevel(logging.ERROR)
+
 T = TypeVar("T", bound=BaseModel)
 
 MOCK = "mock"
+
+# Reasoning models spend output tokens thinking before they answer, so a small
+# cap returns nothing at all. Measured on gemini-flash-latest: 20 tokens -> empty
+# (finish_reason MAX_TOKENS), 600 -> "OK".
+MIN_OUTPUT_TOKENS = 600
 
 # OpenAI-compatible providers: name -> (base URL, API key env var)
 OPENAI_COMPATIBLE: Dict[str, tuple] = {
@@ -158,7 +167,7 @@ def _gemini(spec: ProviderSpec, prompt: str, system: str, temperature: float,
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     config: Dict[str, Any] = {
         "temperature": temperature,
-        "max_output_tokens": max_tokens,
+        "max_output_tokens": max(max_tokens, MIN_OUTPUT_TOKENS),
     }
     if system:
         config["system_instruction"] = system
@@ -171,7 +180,14 @@ def _gemini(spec: ProviderSpec, prompt: str, system: str, temperature: float,
         contents=prompt,
         config=types.GenerateContentConfig(**config),
     )
-    return resp.text or ""
+    if not resp.text:
+        finish = getattr(resp.candidates[0], "finish_reason", None) if resp.candidates else None
+        raise RuntimeError(
+            f"no text in response (finish_reason={finish})"
+            + (" — the model used its whole budget thinking; raise max_tokens"
+               if str(finish).endswith("MAX_TOKENS") else "")
+        )
+    return resp.text
 
 
 def _anthropic(spec: ProviderSpec, prompt: str, system: str, temperature: float,
@@ -202,16 +218,24 @@ def _openai_compatible(spec: ProviderSpec, prompt: str, system: str, temperature
 
     messages = ([{"role": "system", "content": system}] if system else []) + \
                [{"role": "user", "content": prompt}]
+    model = spec.model or "gpt-4o-mini"
     kwargs: Dict[str, Any] = {
-        "model": spec.model or "gpt-4o-mini",
+        "model": model,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": max_tokens,
+        "max_tokens": max(max_tokens, MIN_OUTPUT_TOKENS),
     }
     if schema is not None:
         kwargs["response_format"] = {"type": "json_object"}
+    if "gpt-oss" in model:
+        # Open-weight reasoning models: keep the thinking short so the answer fits.
+        kwargs["extra_body"] = {"reasoning_effort": "low"}
     resp = client.chat.completions.create(**kwargs)
-    return resp.choices[0].message.content or ""
+    text = resp.choices[0].message.content or ""
+    if not text.strip():
+        finish = resp.choices[0].finish_reason
+        raise RuntimeError(f"no text in response (finish_reason={finish})")
+    return text
 
 
 # ---- helpers ---------------------------------------------------------------

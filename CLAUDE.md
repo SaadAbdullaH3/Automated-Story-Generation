@@ -158,11 +158,32 @@ adapters are covered by mocked tests.
   ~17% long); calibrating WORDS_PER_SECOND 2.6 -> 2.2 against measured edge-tts brought a
   24 s target to 23.5 s (2.1% error). Latest run in docs/BENCHMARK.md.
 
+## Live provider verification (2026-10-01)
+
+Keys arrived; `python main.py providers --check` found four real problems, all now fixed:
+- **Reasoning models returned nothing** at small token caps (gemini-flash-latest and
+  gpt-oss spend output tokens thinking: 20 tokens -> empty/MAX_TOKENS, 600 -> "OK").
+  `MIN_OUTPUT_TOKENS = 600` floor, `reasoning_effort=low` for gpt-oss, and an empty
+  response now reports its finish_reason instead of "empty response".
+- **Cloudflare flux-1-schnell rejects `seed`** (HTTP 400). The error names the field, so
+  the provider drops it and retries once.
+- **A Pollinations key with no pollen budget 402s**; it now falls back to the keyless
+  endpoint for the rest of the run instead of failing the image.
+- **Tests were picking up the real .env** (main.py loads it on import), which would spend
+  the owner's quota. conftest sets PIPELINE_SKIP_DOTENV=1 and scrubs every credential;
+  scripts/benchmark.py loads .env the same way the app does.
+
+First fully live run (24 s, 3 scenes, Urdu subs): **87.8 s** (was 146 s keyless), script by
+Gemini/Groq, 12 of 13 images from Cloudflare FLUX, frame-exact sync, 4/4 lines on cuts,
+5.8% length error. In that one run Gemini 503'd and Groq took over, and one prompt was
+refused by Cloudflare as NSFW (false positive) and was covered by Pollinations — the
+chain degraded visibly instead of silently. See docs/BENCHMARK.md.
+
 ## Known issues / next milestones
 
-- Live API verification for Gemini / Groq / Cloudflare is pending free keys from the owner.
-- Without any image key, images still come from the legacy Pollinations endpoint (`sana`,
-  ~1024x576, ~40 s each, one at a time). Cloudflare or local Z-Image fixes both.
+- The Pollinations key has a 0 pollen budget, so the keyed endpoint 402s and the keyless
+  (weaker `sana`, ~1024x576) one serves as the backup behind Cloudflare.
+- Cloudflare's safety filter occasionally rejects an innocuous scene prompt as NSFW.
 - Voices are still edge-tts only; Kokoro / Chatterbox voices and ACE-Step music need a
   ~2-3 GB torch install, so they stay optional (deferred again from M3).
 - Storyboard previews are drawn at 512x288 and thrown away at render time; reusing them as

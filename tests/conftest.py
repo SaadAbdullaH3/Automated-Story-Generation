@@ -13,6 +13,16 @@ sys.path.insert(0, str(ROOT))
 # mock LLM (template script + keyword classifier) and the PIL placeholder for images.
 os.environ.setdefault("LLM_PROVIDER", "mock")
 os.environ.setdefault("PROVIDER_IMAGE", "placeholder")
+
+# Real credentials must never reach the tests: they would spend the owner's free
+# quota and make results depend on which keys happen to be present on a machine.
+os.environ["PIPELINE_SKIP_DOTENV"] = "1"      # main.py skips loading .env
+for _credential in ("GEMINI_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY",
+                    "ANTHROPIC_API_KEY", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN",
+                    "POLLINATIONS_API_KEY", "ELEVENLABS_API_KEY", "FAL_KEY", "FAL_API_KEY",
+                    "REPLICATE_API_TOKEN", "HF_TOKEN", "HUGGINGFACE_API_KEY",
+                    "OLLAMA_HOST", "SD_API_URL", "LOCAL_SD", "MYMEMORY_EMAIL"):
+    os.environ.pop(_credential, None)
 # Only the languages a test asks for get subtitle tracks.
 os.environ.pop("SUBTITLE_EXTRA_LANGUAGES", None)
 

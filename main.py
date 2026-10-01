@@ -15,12 +15,14 @@ from pathlib import Path
 # Make sure project root is on sys.path when invoked directly.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# Load .env if python-dotenv is available.
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:  # noqa: BLE001
-    pass
+# Load .env if python-dotenv is available. Tests set PIPELINE_SKIP_DOTENV=1 so a
+# developer's real keys can never leak into them (no quota spent, no flaky runs).
+if os.getenv("PIPELINE_SKIP_DOTENV") != "1":
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except Exception:  # noqa: BLE001
+        pass
 
 # Register all MCP tools.
 import mcp.tools  # noqa: F401

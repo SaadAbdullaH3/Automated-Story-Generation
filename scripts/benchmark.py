@@ -25,6 +25,14 @@ from typing import Any, Dict, List
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+# Same credentials the app uses (tests set PIPELINE_SKIP_DOTENV=1 to opt out).
+if os.getenv("PIPELINE_SKIP_DOTENV") != "1":
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(ROOT / ".env")
+    except Exception:  # noqa: BLE001
+        pass
+
 PROMPTS = [
     "A young astronaut discovers a hidden ocean on Mars",
     "A lighthouse keeper befriends a stranded whale",
