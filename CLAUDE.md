@@ -413,8 +413,10 @@ empty. Use SQLite's backup API (`sqlite3.Connection.backup`) or `VACUUM INTO`.
   per clip. The chain, the Veo adapter and the fallback to camera moves are
   unit-tested; the network call is not.
 - Cloudflare's safety filter occasionally rejects an innocuous scene prompt as NSFW.
-- Voices are still edge-tts only; Kokoro / Chatterbox voices and ACE-Step music need a
-  ~2-3 GB torch install, so they stay optional (deferred again from M3).
+- Kokoro is the default voice and needs no torch (onnxruntime, ~340 MB of model
+  files via scripts/get_kokoro.py); edge-tts, gTTS and pyttsx3 are the fallbacks
+  and the UI can pick between them. Still deferred: Chatterbox voices and
+  ACE-Step music, which do need a ~2-3 GB torch install.
 - Storyboard previews are drawn at 512x288 and thrown away at render time; reusing them as
   the wide shot would save one image per scene.
 - Snapshots copy every file per version — storage grows quickly (content-addressed storage would fix it).

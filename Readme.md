@@ -8,6 +8,11 @@ music, subtitles and cuts.**
 ![tests](https://img.shields.io/badge/tests-274%20passing-brightgreen)
 ![cost](https://img.shields.io/badge/running%20cost-%240-brightgreen)
 
+![A flooded city at dawn, the camera drifting over it, Urdu subtitles burned into the picture](docs/demo.gif)
+
+<sub>Six seconds of a real run — unedited, made by the command below. Every
+image, voice, cut, camera move and subtitle in it was generated.</sub>
+
 ```bash
 python main.py "A clockmaker in a flooded city repairs the hours people lose"
 ```
