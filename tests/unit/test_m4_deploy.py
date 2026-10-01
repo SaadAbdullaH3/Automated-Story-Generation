@@ -275,3 +275,29 @@ def test_a_film_published_to_real_s3_comes_back_byte_for_byte(isolated_dirs, mon
     # And the key is laid out the way the rest of the app expects.
     listing = store.client().list_objects_v2(Bucket=bucket, Prefix="pid_live/")
     assert [o["Key"] for o in listing["Contents"]] == ["pid_live/final_output.mp4"]
+
+
+def test_having_bucket_credentials_does_not_switch_storage_on(isolated_dirs,
+                                                              monkeypatch):
+    """Local disk is the default and stays the default.
+
+    The R2 keys live in .env so a deployment can use them, but credentials
+    sitting in the environment must not be what decides where assets go —
+    only STORAGE_URL does. Otherwise adding a key to try something quietly
+    reroutes every local render through a bucket.
+    """
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "an-access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "a-secret")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "https://account.r2.cloudflarestorage.com")
+    monkeypatch.setenv("S3_REGION", "auto")
+    monkeypatch.delenv("STORAGE_URL", raising=False)
+    assets.reset()
+
+    assert assets.backend_name() == "local"
+    assert assets.asset_url(constants.OUTPUTS_DIR / "pid" / "film.mp4") == \
+        "/assets/pid/film.mp4"
+
+    # ... and naming the bucket is the single thing that changes it.
+    monkeypatch.setenv("STORAGE_URL", "s3://multi-agent-storygen")
+    assets.reset()
+    assert assets.backend_name() == "s3"

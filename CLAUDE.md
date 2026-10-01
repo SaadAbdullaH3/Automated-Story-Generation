@@ -421,9 +421,10 @@ empty. Use SQLite's backup API (`sqlite3.Connection.backup`) or `VACUUM INTO`.
 - The S3/R2 asset backend is verified against both a local S3 server
   (`python -m moto.server`) and **real Cloudflare R2**, bucket
   `multi-agent-storygen`: 31 assets / 17 MB up, film back byte-identical.
-  `STORAGE_URL` is left unset locally on purpose — the API and the worker
-  share a disk here, so publishing to a bucket would only add latency and
-  one-hour presigned URLs. It is for a deployment where they do not.
+  **Local disk is the default and stays the default** — the API and the
+  worker share a disk here, so a bucket would only add latency and one-hour
+  presigned URLs. Only `STORAGE_URL` switches it; having R2 credentials in the
+  environment does not, and a test pins that down.
 - Two workers on one laptop contend for CPU; concurrency helps across hosts.
 - No password reset by email (no mail service at $0) — `python main.py users
   passwd <email>` is the recovery path, which suits a self-hosted deployment.
