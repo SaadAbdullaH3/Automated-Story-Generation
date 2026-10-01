@@ -352,11 +352,12 @@ no session, `/api/projects/` and a real film's `/assets/...` URL both answer 401
   synonym table catches what a writing model invents.
 - **Real motion is a provider chain** (`video` and `lipsync` roles) instead of
   an `if os.getenv(...)` ladder inside the agent — which is what the provider
-  layer exists to replace. **Veo 3.1** is wired first, because it is the only
-  one this project already holds a key for, but it is billed per second and is
-  not in the Gemini free tier, so it requires `VIDEO_BUDGET_OK` as well as the
-  key. Nobody should start a per-second bill by pasting a key they already had.
-  **It has not been called.**
+  layer exists to replace. Free providers come first on purpose: a per-clip
+  charge does not get to be the default just because it is better. **Veo 3.1**
+  is reachable (the Gemini key already present can call it) but is billed per
+  second and outside the free tier, so it sits below the free options and
+  needs `VIDEO_BUDGET_OK` as well as the key. **Saad ruled it out on cost;
+  it has never been called.**
 
 Three robustness fixes found while verifying:
 - The worker pool is sized from the *preferred* provider's concurrency, so when
@@ -372,9 +373,10 @@ Three robustness fixes found while verifying:
 
 ## Known issues / next milestones
 
-- The Pollinations key has a 0 pollen budget, so the keyed endpoint 402s and the keyless
-  (weaker `sana`, ~1024x576) one serves as the backup behind Cloudflare. The
-  keyless endpoint now 402s intermittently too.
+- The Pollinations key now has a small pollen budget, so the keyed endpoint
+  serves the requested model at full size. The keyless endpoint it falls back
+  to when the budget runs out 402s intermittently and returns a weaker model
+  (`sana`, ~1024x576), so a run can degrade mid-film without failing.
 - All three free image providers can be exhausted at once — Cloudflare's 10,000
   neurons/day, Pollinations keyed and keyless — and then a render completes
   with placeholder images rather than failing. That is the designed behaviour,

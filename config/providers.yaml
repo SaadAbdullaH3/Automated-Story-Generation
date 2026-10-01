@@ -117,21 +117,27 @@ roles:
   # Everything here except `ffmpeg` costs money per clip, so the chain ends on
   # the offline animator rather than failing. `ffmpeg` is not a downgrade to be
   # ashamed of: it renders supersampled camera moves (see video_agent/camera.py).
+  # Free first, deliberately. This project runs at zero spend, so a provider
+  # that charges per clip does not get to be the default just because it is
+  # better — each one needs its own env var set on purpose.
   video:
-    - provider: gemini_veo        # Veo 3.1 via the Gemini API. BILLED PER SECOND
-      model: veo-3.1-fast-generate-preview
-      requires: [GEMINI_API_KEY, VIDEO_BUDGET_OK]   # the second is a deliberate opt-in
-      concurrency: 1
     - provider: fal               # ~$1 of free trial credit at fal.ai
       model: fal-ai/stable-video-diffusion
       requires: [FAL_KEY|FAL_API_KEY]
       concurrency: 2
+    - provider: huggingface       # free tier, noticeably lower quality
+      requires: [HF_TOKEN|HUGGINGFACE_API_KEY]
+      concurrency: 1
+    # Paid. Reachable only by setting the extra flag/token below, never by
+    # holding a key for something else. Veo 3.1 is the best of these by a wide
+    # margin if the budget constraint ever lifts.
+    - provider: gemini_veo        # BILLED PER SECOND; not in the Gemini free tier
+      model: veo-3.1-fast-generate-preview
+      requires: [GEMINI_API_KEY, VIDEO_BUDGET_OK]   # second one is the opt-in
+      concurrency: 1
     - provider: replicate         # paid per second
       requires: [REPLICATE_API_TOKEN]
       concurrency: 2
-    - provider: huggingface       # free tier, lower quality
-      requires: [HF_TOKEN|HUGGINGFACE_API_KEY]
-      concurrency: 1
     - provider: ffmpeg            # offline camera moves on the still. Always works.
 
   # ---- Lip sync -------------------------------------------------------------

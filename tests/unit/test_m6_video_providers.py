@@ -124,7 +124,10 @@ def test_the_shipped_config_keeps_the_offline_animator_last():
     # specs() is every entry; chain() is only the ones usable right now.
     video = [s.provider for s in providers.load().specs("video")]
     assert video[-1] == "ffmpeg"
-    assert video[0] == "gemini_veo"
+    # Free options come first: a provider that charges per clip must not be
+    # the default on a project that runs at zero spend.
+    assert video.index("fal") < video.index("gemini_veo")
+    assert video.index("huggingface") < video.index("replicate")
     assert [s.provider for s in providers.load().specs("lipsync")][-1] == "none"
     # And with no keys on this machine, that last entry is what is in use.
     assert [s.provider for s in providers.chain("video")] == ["ffmpeg"]

@@ -424,10 +424,11 @@ huggingface  free tier, lower quality
 ffmpeg       the camera moves above — offline, always works, costs nothing
 ```
 
-The chain ends on `ffmpeg`, so a render never fails for want of a paid
-provider. Veo needs `VIDEO_BUDGET_OK=1` on top of the API key, deliberately:
-holding a Gemini key for the free text models should not quietly start a
-per-second video bill.
+The free options come first on purpose — a provider that charges per clip
+does not get to be the default just because it is better — and the chain ends
+on `ffmpeg`, so a render never fails for want of a paid provider. Veo needs
+`VIDEO_BUDGET_OK=1` on top of the API key, deliberately: holding a Gemini key
+for the free text models should not quietly start a per-second video bill.
 
 ### Accounts
 

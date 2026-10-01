@@ -235,8 +235,16 @@ class ImageGenTool(BaseTool):
                        "Pollinations legacy endpoint served model %r at %dx%d instead of %r "
                        "at %dx%d. Set POLLINATIONS_API_KEY (free at enter.pollinations.ai) "
                        "for the requested model.", served, native[0], native[1], model, w, h)
-        return {"endpoint": endpoint, "requested_model": model,
+        meta = {"endpoint": endpoint, "requested_model": model,
                 "served_model": served or model, "native_size": list(native)}
+        # A keyed account has a pollen balance. Surface whatever the response
+        # says about it, so a run reports what it spent instead of the budget
+        # quietly running out mid-film.
+        balance = _pollen_balance(r.headers)
+        if balance is not None:
+            meta["pollen_balance"] = balance
+            log.info("pollinations: %s pollens left", balance)
+        return meta
 
     def _provider_cloudflare(self, spec: ProviderSpec, prompt: str, negative: str, out: Path,
                              w: int, h: int, seed: int) -> dict:
@@ -408,6 +416,16 @@ def _is_permanent(error: Exception) -> bool:
     text = str(error).lower()
     return any(code in text for code in ("401", "403", "unauthorized", "forbidden",
                                          "invalid api key", "400"))
+
+
+def _pollen_balance(headers) -> Optional[str]:
+    """Whatever the response says about the account's remaining credit."""
+    for name in ("x-pollen-balance", "x-pollens-remaining", "x-credits-remaining",
+                 "x-ratelimit-remaining", "x-balance"):
+        value = headers.get(name)
+        if value:
+            return value
+    return None
 
 
 def _warn_once(key: str, msg: str, *args) -> None:
