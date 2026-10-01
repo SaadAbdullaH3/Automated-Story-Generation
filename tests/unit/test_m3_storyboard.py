@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from agents.orchestrator import PipelineOrchestrator
 from state_manager.state_manager import StateManager
 from state_manager.storage import SqliteStorage
-from tests.conftest import silence_tts
+from tests.conftest import run_queued_jobs, silence_tts
 
 
 @pytest.fixture
@@ -157,6 +157,9 @@ def test_storyboard_api_round_trip(isolated_dirs, monkeypatch):
     })
     assert started.status_code == 200
     pid = started.json()["project_id"]
+    assert started.json()["status"] == "planning"
+    # The API only queues the run; a worker does the work.
+    assert len(run_queued_jobs(orch)) == 1
 
     board = client.get(f"/api/pipeline/storyboard/{pid}").json()
     assert board["stage"] == "storyboard" and len(board["frames"]) == 2
@@ -171,6 +174,7 @@ def test_storyboard_api_round_trip(isolated_dirs, monkeypatch):
     rendered = client.post(f"/api/pipeline/render/{pid}",
                            json={"with_bgm": False, "with_subtitles": False})
     assert rendered.status_code == 200
+    assert len(run_queued_jobs(orch)) == 1
     state = sm.latest(pid)
     assert state.stage == "rendered" and Path(state.video.final_video_path).exists()
 

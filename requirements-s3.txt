@@ -1,0 +1,5 @@
+# Object storage — only needed when STORAGE_URL points at an S3-compatible
+# bucket (AWS S3, MinIO, or Cloudflare R2's free 10 GB tier).
+#   pip install -r requirements-s3.txt
+#   STORAGE_URL=s3://my-bucket
+boto3>=1.34

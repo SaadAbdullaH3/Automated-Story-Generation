@@ -1,0 +1,5 @@
+# Postgres driver — only needed when DATABASE_URL points at Postgres.
+#   pip install -r requirements-postgres.txt
+#   DATABASE_URL=postgresql+psycopg://user:pass@host/dbname
+# A free managed instance (Neon, Supabase) is enough for the job queue.
+psycopg[binary]>=3.1

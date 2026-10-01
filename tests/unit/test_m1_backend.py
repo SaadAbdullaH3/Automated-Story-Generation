@@ -1,4 +1,4 @@
-"""M1 — backend fixes: thread-safe progress, Windows paths, languages, phase events."""
+"""M1 — backend fixes: live progress, Windows paths, languages, phase events."""
 from __future__ import annotations
 import asyncio
 import threading
@@ -7,29 +7,34 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+import jobs
 from backend.app import app
-from backend.services import run_registry
+from backend.services import progress
 
 
-def test_progress_events_from_worker_thread_arrive_promptly():
-    """The consumer is already asleep in the event loop when a pipeline thread
-    pushes; the old non-thread-safe put only surfaced at the loop's next timer
-    (the 30 s WebSocket heartbeat in production)."""
+def test_progress_events_from_worker_thread_arrive_promptly(isolated_dirs):
+    """A consumer already waiting on the stream must see an event pushed from a
+    worker thread within a beat — the original bug surfaced events only at the
+    next 30 s WebSocket heartbeat. Since M4 the two sides can also be different
+    processes, so the event travels through the database rather than a queue."""
+    job = jobs.enqueue("plan", "t_ws", {"prompt": "x"})
+
     def late_push():
         time.sleep(0.3)
-        run_registry.push_event("t_ws", {"phase": "story", "status": "started"})
+        jobs.append_event(job.id, "t_ws", phase="story", status="started",
+                          message="writing", progress=0.1)
 
     async def scenario():
-        q = run_registry.subscribe("t_ws")
+        stream = progress.stream("t_ws")
         started = time.monotonic()
         threading.Thread(target=late_push).start()
-        ev = await asyncio.wait_for(q.get(), timeout=3.0)
-        run_registry.unsubscribe("t_ws", q)
-        return ev, time.monotonic() - started
+        async for envelope in stream:
+            if envelope["type"] == "event":
+                return envelope["data"], time.monotonic() - started
+        raise AssertionError("stream ended without an event")
 
-    run_registry.create("t_ws")
-    ev, elapsed = asyncio.run(scenario())
-    assert ev["phase"] == "story"
+    event, elapsed = asyncio.run(asyncio.wait_for(scenario(), timeout=5.0))
+    assert event["phase"] == "story"
     assert elapsed < 1.0
 
 

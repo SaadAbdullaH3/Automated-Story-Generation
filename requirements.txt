@@ -18,6 +18,10 @@ deep-translator>=1.11.0   # free Google Translate fallback for multi-language su
 # Model settings layer (config/providers.yaml)
 PyYAML>=6.0
 
+# Database: the version log and the job queue. SQLite by default (no server
+# needed); set DATABASE_URL to a Postgres URL and add requirements-postgres.txt.
+SQLAlchemy>=2.0
+
 # LLM providers (all optional — pip install only what you use).
 # The openai client also speaks to Groq, OpenRouter and Ollama.
 google-genai>=1.51        # Gemini (replaces the deprecated google-generativeai)

@@ -28,6 +28,7 @@ if os.getenv("PIPELINE_SKIP_DOTENV") != "1":
 import mcp.tools  # noqa: F401
 
 from agents.edit_agent import EditAgent
+from jobs.queue import JOB_KINDS
 from agents.orchestrator import PipelineOrchestrator, ProgressEvent
 from shared.schemas.edit import EditCommand
 from state_manager.state_manager import StateManager
@@ -52,6 +53,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         with_subtitles=not args.no_subs,
         subtitle_language=args.subtitle_lang,
         burn_subtitles=not args.no_burn_subs,
+        tts_engine=args.voice_engine,
         on_event=_print_event,
         use_text_to_video=use_t2v,
         use_lip_sync=use_lip,
@@ -141,6 +143,7 @@ def cmd_render(args: argparse.Namespace) -> int:
             with_subtitles=not args.no_subs,
             subtitle_language=args.subtitle_lang,
             burn_subtitles=not args.no_burn_subs,
+            tts_engine=args.voice_engine,
             use_text_to_video=False if args.no_real_video else None,
             use_lip_sync=False if args.no_lipsync else None,
             on_event=_print_event,
@@ -271,6 +274,45 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_worker(args: argparse.Namespace) -> int:
+    """Run a pipeline worker: claim queued jobs and execute them."""
+    from jobs import worker
+    print(f"worker up - database {_database_label()}")
+    print("waiting for jobs (Ctrl-C to stop)\n")
+    try:
+        if args.once:
+            job = worker.run_once(kinds=args.kinds or None)
+            print(f"ran {job.id} ({job.kind})" if job else "queue empty")
+        else:
+            worker.run_forever(poll_interval=args.poll, kinds=args.kinds or None)
+    except KeyboardInterrupt:
+        print("\nstopping")
+    return 0
+
+
+def cmd_jobs(args: argparse.Namespace) -> int:
+    """Show the queue."""
+    import jobs as job_queue
+    rows = job_queue.list_jobs(project_id=args.project_id, status=args.status,
+                               limit=args.limit)
+    if not rows:
+        print("no jobs")
+        return 0
+    print(f"{'job':<18}{'kind':<12}{'status':<11}{'attempts':<9}project")
+    for job in rows:
+        print(f"{job.id:<18}{job.kind:<12}{job.status:<11}"
+              f"{job.attempts}/{job.max_attempts:<7}{job.project_id}")
+        if job.error:
+            print(f"    {job.error.splitlines()[-1][:110]}")
+    return 0
+
+
+def _database_label() -> str:
+    from shared import db
+    url = db.get_engine().url
+    return f"{url.get_backend_name()} ({url.database})"
+
+
 def cmd_edit(args: argparse.Namespace) -> int:
     sm = StateManager()
     if not sm.latest(args.project_id):
@@ -344,6 +386,8 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--no-burn-subs", action="store_true",
                     help="keep subtitles as soft tracks only (most players hide those "
                          "behind a menu) instead of burning them into the picture")
+    rp.add_argument("--voice-engine", default=None,
+                    help="kokoro | edge | gtts | pyttsx3 (default: config/providers.yaml)")
     rp.add_argument("--no-real-video", action="store_true",
                     help="force ffmpeg ken-burns even if FAL_KEY is set (saves API credit)")
     rp.add_argument("--no-lipsync", action="store_true",
@@ -379,6 +423,8 @@ def build_parser() -> argparse.ArgumentParser:
     rd.add_argument("--no-subs", action="store_true")
     rd.add_argument("--subtitle-lang", default="English")
     rd.add_argument("--no-burn-subs", action="store_true")
+    rd.add_argument("--voice-engine", default=None,
+                    help="kokoro | edge | gtts | pyttsx3 (default: config/providers.yaml)")
     rd.add_argument("--no-real-video", action="store_true")
     rd.add_argument("--no-lipsync", action="store_true")
     rd.set_defaults(fn=cmd_render)
@@ -393,6 +439,20 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--port", type=int, default=8000)
     sp.add_argument("--reload", action="store_true")
     sp.set_defaults(fn=cmd_serve)
+
+    wp = sub.add_parser("worker", help="run a pipeline worker (claims queued jobs)")
+    wp.add_argument("--once", action="store_true", help="run a single job, then exit")
+    wp.add_argument("--poll", type=float, default=1.0, help="seconds between polls")
+    wp.add_argument("--kinds", nargs="*", default=[],
+                    help=f"only these job kinds ({', '.join(JOB_KINDS)})")
+    wp.set_defaults(fn=cmd_worker)
+
+    jp = sub.add_parser("jobs", help="show the job queue")
+    jp.add_argument("--project-id", default=None)
+    jp.add_argument("--status", default=None,
+                    help="queued | running | succeeded | failed | cancelled")
+    jp.add_argument("--limit", type=int, default=25)
+    jp.set_defaults(fn=cmd_jobs)
 
     ep = sub.add_parser("edit", help="interactive edit REPL on an existing project")
     ep.add_argument("project_id")
@@ -411,7 +471,7 @@ def main() -> int:
     parser = build_parser()
     if len(sys.argv) > 1 and sys.argv[1] not in (
         "run", "plan", "storyboard", "restyle", "render", "serve", "edit",
-        "history", "list", "providers", "-h", "--help"
+        "history", "list", "providers", "worker", "jobs", "-h", "--help"
     ):
         # Treat first arg as a prompt for convenience.
         args = parser.parse_args(["run"] + sys.argv[1:])

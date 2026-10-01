@@ -1,9 +1,9 @@
 """List + browse projects."""
 from __future__ import annotations
-from pathlib import PureWindowsPath  # splits on both "\" and "/"
 
 from fastapi import APIRouter
 
+from shared.assets import asset_url
 from state_manager.state_manager import StateManager
 
 router = APIRouter()
@@ -24,9 +24,7 @@ def list_projects():
             "prompt": state.user_prompt,
             "version": state.version,
             "updated_at": state.updated_at,
-            "video_url": (
-                f"/assets/{pid}/{PureWindowsPath(state.video.final_video_path).name}"
-                if state.video and state.video.final_video_path else None
-            ),
+            "video_url": asset_url(
+                state.video.final_video_path if state.video else None),
         })
     return out

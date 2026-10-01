@@ -40,14 +40,19 @@ The default TTS engine shells out to the `edge-tts` CLI, which lives in
 ## Commands
 
 ```bash
-python -m pytest -q                        # full suite (~3.5 min, offline: mock LLM + placeholder images)
+python -m pytest -q                        # full suite (~3 min, offline: mock LLM + placeholder images)
+TEST_DATABASE_URL=postgresql+psycopg://... python -m pytest -q   # same suite, real Postgres
+TEST_S3_ENDPOINT=http://127.0.0.1:5111 python -m pytest -k real_s3   # against a real S3/R2 server
 python -m pytest tests/unit/test_phase5_edit.py -q
 python main.py "prompt" --duration 30 --scenes 4   # CLI end-to-end run
 python main.py plan "prompt" --scenes 4            # storyboard only (cheap)
 python main.py storyboard|restyle|render <pid>     # review, edit, then render
 python scripts/benchmark.py --offline              # fixed prompts, measured
 python main.py providers                   # which providers are detected
-python main.py serve --reload              # web UI on http://localhost:8000
+python main.py serve --reload              # web UI on http://localhost:8000 (runs a worker too)
+python main.py worker                      # a worker process on its own (WORKER_INLINE=0 for the API)
+python main.py jobs [--status failed]      # the queue: what ran, what broke
+docker compose up --build --scale worker=3 # API + workers + Postgres
 python main.py edit <project_id>           # interactive edit REPL
 python main.py list | history <project_id>
 ```
@@ -72,7 +77,12 @@ Outputs go to `data/outputs/<project_id>/`, version snapshots to
 | Tool layer | `mcp/` | Internal tool registry (**not** the MCP protocol). Tools register on `import mcp.tools`; agents call `ToolExecutor().execute("audio.tts", ...)`. Each tool tries providers in order and falls back. |
 | Model settings | `config/providers.yaml` + `shared/providers.py` | **Which model serves each role** (story, edit_intent, translate, image, tts, music). Agents never name a model: they call `providers.chain(role)` and use the first available, falling through on failure. `concurrency:` per provider drives `shared/utils/parallel.run_jobs`. |
 | LLM client | `mcp/tools/llm_tools/llm_client.py` | `get_llm_client(role)` walks that role's chain: Gemini (google-genai, native JSON schema), Groq / OpenRouter / Ollama / OpenAI (all via the openai client), Anthropic, then `mock` = use the offline fallback. |
-| Backend | `backend/` | FastAPI routes, in-memory run registry, WebSocket progress at `/ws/progress/{pid}`, `/assets` serves `data/outputs`. |
+| Jobs | `jobs/` | **Runs are rows, not closures.** `queue.py` (enqueue/claim/heartbeat/cancel, one atomic UPDATE per claim) and `worker.py` (claims jobs, runs the orchestrator, publishes assets). Cancellation lands between pipeline steps, never mid-ffmpeg. |
+| Database | `shared/db.py` | One database for the version log and the queue. SQLite (WAL) by default, Postgres via `DATABASE_URL`, same SQL through SQLAlchemy Core. |
+| Assets | `shared/assets.py` | The only place a file path becomes a URL. Local disk by default; `STORAGE_URL=s3://bucket` publishes to any S3-compatible bucket (R2) so the worker and the API need not share a filesystem. |
+| Voices | `shared/voices.py` + `backend/routes/voices.py` | Which engines work on this machine and why not, their voices, and a cached one-line sample so a voice can be heard before a render. |
+| Fonts | `shared/fonts.py` | Picks an installed font with the script's glyphs (`Segoe UI` on Windows, Noto in the container). A missing font draws nothing rather than failing. |
+| Backend | `backend/` | FastAPI routes, DB-backed progress (`services/progress.py`), WebSocket at `/ws/progress/{pid}`, `/assets` serves `data/outputs`. |
 | Frontend | `frontend/src/` | Vanilla HTML/CSS/JS, no build step, served by FastAPI. |
 
 ## Conventions
@@ -198,6 +208,80 @@ Saad watched the first live render and reported three things:
   `KOKORO_MODEL` is set; ~2 s per line on this laptop. Voice names are per engine
   (`AudioAgent.voice_for`), so "change voice" picks alternates from the right pool.
 
+## M4 results (2026-10-01)
+
+195/195 tests pass. Production architecture:
+- **Durable jobs.** A run was a `BackgroundTasks` closure plus a module-level
+  dict: a restart orphaned it, nothing outside the process could see it, and it
+  couldn't be stopped. Now the API enqueues and returns in milliseconds, a worker
+  claims the job with a single atomic UPDATE (Postgres `SKIP LOCKED`; on SQLite
+  the `status='queued'` guard makes a second claim match nothing), and progress
+  events are rows, so a reconnecting browser replays what it missed. A worker
+  that stops heartbeating for two minutes has its job requeued, bounded by
+  `max_attempts`. Cancellation is cooperative and lands between steps.
+- **One database, two backends.** `shared/db.py` holds the version log and the
+  queue through SQLAlchemy Core: SQLite in WAL mode locally (so the API and the
+  inline worker can both write), Postgres by setting `DATABASE_URL`. Setting
+  `TEST_DATABASE_URL` runs the whole suite against a real server instead of
+  throwaway SQLite files, so the Postgres path is tested, not assumed.
+- **Scales apart.** `main.py serve` still runs a worker thread, so a laptop
+  needs one command; `WORKER_INLINE=0` plus `main.py worker` splits them, and
+  `docker compose up --scale worker=3` runs three renders at once.
+- **Asset URLs in one place.** `shared/assets.py` replaced three hand-built
+  `/assets/...` strings; with `STORAGE_URL` set it publishes to an
+  S3-compatible bucket after a job succeeds.
+- **Choose and hear the voice.** `/api/voices` says which engines work here and
+  why not; `/api/voices/preview` renders a cached one-line sample. The choice
+  rides with the run to the audio agent, and a re-run keeps it. A preview that
+  fell back to another engine says so rather than passing it off.
+- **Portable fonts.** The burned-in subtitle font is resolved against what is
+  installed (`fc-match` where available), because `Segoe UI` does not exist in
+  the Linux image and a missing font silently draws nothing.
+
+Measured live, API and worker as separate processes:
+- A 24 s / 3-scene film with Kokoro voices and burned Urdu subtitles: the POST
+  returned at once, the worker finished in **118.8 s**, and the film is correct
+  (1280x720, Urdu burned in with right-to-left shaping, English soft track).
+- A Kokoro sample for the voice picker rendered in **4.4 s** and is then cached.
+- Cancelling a running job stopped it **16.3 s** later at the next step, left no
+  error event behind, and the worker went straight on to the next job. (That
+  last part needed a fix: `JobCancelled` derives from BaseException, because the
+  orchestrator's `except Exception` was catching a deliberate stop and reporting
+  it to the browser as a failure.)
+- A job queued while the API was **shut down entirely** was still `queued`
+  afterwards and ran to completion when the API came back — the exact case the
+  old in-memory registry lost.
+
+Verified against a real Postgres 16 (`docker run postgres:16-alpine`):
+- The **whole suite, 195/195**, passes with `TEST_DATABASE_URL` pointed at it.
+- 40 jobs, 4 separate OS processes claiming at once: 11/11/9/9, **no job
+  claimed twice, none left behind**. This is what `SKIP LOCKED` is for.
+- The real stack — API plus two worker processes on one Postgres — rendered two
+  films concurrently, one on each worker. Wall clock 327 s for both, but they
+  were 98 s and 324 s: two ffmpeg pipelines on one laptop fight for cores, so
+  extra workers pay off across machines, not on this one.
+
+## Cloudflare account check (2026-10-01)
+
+- `CLOUDFLARE_API_TOKEN` is scoped to **Workers AI only**: `/accounts/{id}` and
+  `/accounts/{id}/r2/buckets` both return 403, while the Workers AI endpoints
+  answer normally. R2 therefore cannot be reached with the key already in `.env`.
+- Workers AI itself is fine, but the **10,000 neuron/day free allocation was
+  exhausted** by the M4 verification renders (HTTP 429, "you have used up your
+  daily free allocation"). It resets daily; until then images fall through to
+  Pollinations' keyless endpoint, which is what the chain is for.
+- Using R2 needs three things only the account owner can do: enable R2 (which
+  asks for a payment method even for the free 10 GB), create a bucket, and mint
+  an **R2 API token** — that is a separate S3 access key id + secret, not the
+  Workers AI bearer token. Then:
+  `STORAGE_URL=s3://<bucket>`, `S3_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com`,
+  `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` from that token, and
+  `python -m pytest -k real_s3` with `TEST_S3_ENDPOINT` set proves it in one run.
+- Testing against a real S3 server found one bug: boto3 defaults to
+  virtual-host addressing (`bucket.host`), which needs DNS per bucket and fails
+  on R2/MinIO-style endpoints. `shared/assets.py` now uses path addressing
+  whenever `S3_ENDPOINT_URL` is set.
+
 ## Known issues / next milestones
 
 - The Pollinations key has a 0 pollen budget, so the keyed endpoint 402s and the keyless
@@ -207,5 +291,12 @@ Saad watched the first live render and reported three things:
   ~2-3 GB torch install, so they stay optional (deferred again from M3).
 - Storyboard previews are drawn at 512x288 and thrown away at render time; reusing them as
   the wide shot would save one image per scene.
-- Snapshots copy every file per version — storage grows quickly (M4: content-addressed storage).
+- Snapshots copy every file per version — storage grows quickly (content-addressed storage would fix it).
+- The S3/R2 asset backend has been verified against a real S3 server
+  (`python -m moto.server`), not just a fake client: a finished film's 32
+  assets (19.3 MB) uploaded through the worker's publish step and the film came
+  back byte-identical over a presigned URL. It has **not** run against
+  Cloudflare R2 itself — see below.
+- Two workers on one laptop contend for CPU; concurrency helps across hosts.
+- No authentication: every project is visible to anyone who can reach the API.
 - Scene-scoped voice edits apply to that scene only until a later global audio edit re-renders it.

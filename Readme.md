@@ -320,11 +320,17 @@ will automatically:
 * **Frontend** — vanilla HTML/CSS/JS single-page (no build step)
 * **Endpoints**
   ```
-  POST /api/pipeline/run              start a new pipeline
+  POST /api/pipeline/run              queue a new pipeline run
   POST /api/pipeline/rerun            re-run phase 1/2/3
   GET  /api/pipeline/state/<pid>      current full state
   GET  /api/pipeline/status/<pid>     lightweight status snapshot
   GET  /api/pipeline/languages        supported subtitle languages
+  GET  /api/jobs/                     the queue (filter by project or status)
+  GET  /api/jobs/<id>                 one job: status, attempts, error
+  POST /api/jobs/<id>/cancel          stop a run
+  GET  /api/voices/                   engines available here, and their voices
+  POST /api/voices/preview            render a one-line sample to listen to
+  GET  /health  ·  GET /ready         liveness, and can it reach the database
   POST /api/edit/classify             classify intent only
   POST /api/edit/apply                apply an edit (versioned)
   GET  /api/edit/log/<pid>            edit history
@@ -334,6 +340,71 @@ will automatically:
   WS   /ws/progress/<pid>             live progress events
   GET  /assets/<pid>/<file>           static asset server
   ```
+
+### Runs are jobs, not requests
+
+Starting a run writes a row and returns immediately; a worker claims it and
+does the work. That is what makes the run survive a restart, watchable from
+another process, and stoppable:
+
+```bash
+python main.py serve            # API + a worker thread: one command, laptop-friendly
+python main.py jobs             # what is queued, running, failed — and why
+```
+
+Claiming is one atomic `UPDATE`, so two workers never take the same job.
+Progress events are rows too, so a browser that reconnects replays what it
+missed instead of waiting on an empty socket. A worker that dies mid-render
+stops heartbeating and its job goes back on the queue, bounded by
+`max_attempts` so a reproducible failure can't loop forever. Cancelling lands
+between pipeline steps, so nothing is killed half-way through an ffmpeg call.
+
+To scale the API and the renderers apart, set `WORKER_INLINE=0` and run
+`python main.py worker` as its own process — or use the containers:
+
+```bash
+docker compose up --build --scale worker=3   # API + 3 workers + Postgres
+```
+
+`DATABASE_URL` switches the version log and the queue from the default SQLite
+file to Postgres; `STORAGE_URL=s3://bucket` publishes finished films to any
+S3-compatible bucket (Cloudflare R2 is free to 10 GB) so the API and the
+workers don't have to share a disk.
+
+Both paths are tested rather than assumed. The whole suite runs against a real
+Postgres server, and the object store against a real S3 one:
+
+```bash
+docker run -d --name storygen-pg -e POSTGRES_USER=storygen \
+  -e POSTGRES_PASSWORD=storygen -e POSTGRES_DB=storygen -p 55432:5432 postgres:16-alpine
+pip install -r requirements-postgres.txt
+TEST_DATABASE_URL=postgresql+psycopg://storygen:storygen@localhost:55432/storygen \
+  python -m pytest -q
+```
+
+```bash
+pip install -r requirements-s3.txt "moto[server]"
+python -m moto.server -p 5111 &
+TEST_S3_ENDPOINT=http://127.0.0.1:5111 S3_REGION=us-east-1 \
+  AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
+  python -m pytest tests/unit/test_m4_deploy.py -k real_s3
+```
+
+Point `TEST_S3_ENDPOINT` at `https://<account>.r2.cloudflarestorage.com` with
+real R2 credentials and the same test verifies Cloudflare R2.
+
+### Choosing a voice, and hearing it first
+
+The voice engine comes from `config/providers.yaml`, but the UI can override it
+per film. The picker lists every engine, marks the ones this machine can't use
+with the reason ("run `python scripts/get_kokoro.py`"), and renders a one-line
+sample on demand so a voice can be heard before committing to a full render.
+If an engine fails and the tool falls back, the preview says so rather than
+playing another engine's voice as the one that was chosen.
+
+```bash
+python main.py "a prompt" --voice-engine kokoro   # or edge, gtts, pyttsx3
+```
 
 ### Storyboard — plan, review, then render
 
