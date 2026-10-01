@@ -78,12 +78,12 @@ def test_burned_subtitles_use_a_font_that_has_the_script(tmp_path):
 
 
 def test_subtitle_tracks_endpoint(small_project, fake_translation):
-    from fastapi.testclient import TestClient
     from backend.app import app
     from backend.routes import pipeline as routes
+    from tests.conftest import signed_in_client
 
     state, sm = small_project(subtitle_language="Urdu")
-    client = TestClient(app)
+    client = signed_in_client(app)
     routes.sm = sm
     tracks = client.get(f"/api/pipeline/subtitles/{state.project_id}").json()
     by_lang = {t["language"]: t for t in tracks}

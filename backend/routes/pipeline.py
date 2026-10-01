@@ -6,10 +6,13 @@ The response carries the job id so the caller can follow, cancel or retry it.
 from __future__ import annotations
 from typing import Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 import jobs
+from auth import accounts
+from auth.deps import require_project, require_user
+from auth.accounts import User
 from shared import voices
 from shared.assets import asset_url
 from shared.languages import iso639_1, supported_names
@@ -59,8 +62,12 @@ def _check_engine(name: Optional[str]) -> None:
         raise HTTPException(409, f"{engine.label} is not available here: {reason}")
 
 
-def _accepted(kind: str, project_id: str, status: str, **payload) -> RunResponse:
+def _accepted(kind: str, project_id: str, status: str, owner: User,
+              **payload) -> RunResponse:
     payload = {k: v for k, v in payload.items() if v is not None}
+    # Record the owner before the job exists, so a worker can't finish a render
+    # into a project nobody is responsible for.
+    accounts.register_project(project_id, owner.id)
     job = jobs.enqueue(kind, project_id, payload)
     log.info("queued %s %s for %s", kind, job.id, project_id)
     return RunResponse(project_id=project_id, job_id=job.id, status=status,
@@ -68,11 +75,11 @@ def _accepted(kind: str, project_id: str, status: str, **payload) -> RunResponse
 
 
 @router.post("/run", response_model=RunResponse)
-def start_run(req: RunRequest):
+def start_run(req: RunRequest, user: User = Depends(require_user)):
     """Queue a full pipeline run; progress streams over /ws/progress/{project_id}."""
     _check_engine(req.tts_engine)
     return _accepted(
-        "run_full", new_project_id(), "queued",
+        "run_full", new_project_id(), "queued", user,
         prompt=req.prompt, target_duration_s=req.target_duration_s,
         scene_count=req.scene_count, with_bgm=req.with_bgm,
         with_subtitles=req.with_subtitles, subtitle_language=req.subtitle_language,
@@ -81,12 +88,14 @@ def start_run(req: RunRequest):
 
 
 @router.post("/rerun", response_model=RunResponse)
-def rerun_phase(req: PhaseRerunRequest):
+def rerun_phase(req: PhaseRerunRequest, user: User = Depends(require_user)):
     if req.phase not in ("story", "audio", "video"):
         raise HTTPException(400, f"unknown phase {req.phase}")
-    if not sm.latest(req.project_id):
+    # The project id arrives in the body, so the check happens here rather
+    # than through the path dependency.
+    if not accounts.may_access(user, req.project_id) or not sm.latest(req.project_id):
         raise HTTPException(404, f"project {req.project_id} not found")
-    return _accepted("rerun_phase", req.project_id, "queued", phase=req.phase)
+    return _accepted("rerun_phase", req.project_id, "queued", user, phase=req.phase)
 
 
 class PlanRequest(BaseModel):
@@ -112,16 +121,16 @@ class RenderRequest(BaseModel):
 
 
 @router.post("/plan", response_model=RunResponse)
-def start_plan(req: PlanRequest):
+def start_plan(req: PlanRequest, user: User = Depends(require_user)):
     """Write the script + preview images only; render is a separate, approved step."""
     return _accepted(
-        "plan", new_project_id(), "planning",
+        "plan", new_project_id(), "planning", user,
         prompt=req.prompt, target_duration_s=req.target_duration_s,
         scene_count=req.scene_count, with_preview=req.with_preview,
     )
 
 
-@router.get("/storyboard/{project_id}")
+@router.get("/storyboard/{project_id}", dependencies=[Depends(require_project)])
 def get_storyboard(project_id: str):
     state = sm.latest(project_id)
     if not state or not state.storyboard:
@@ -135,7 +144,8 @@ def get_storyboard(project_id: str):
     return board
 
 
-@router.patch("/storyboard/{project_id}/{scene_id}")
+@router.patch("/storyboard/{project_id}/{scene_id}",
+              dependencies=[Depends(require_project)])
 def edit_storyboard(project_id: str, scene_id: str, edit: SceneEdit):
     """Edit one scene before rendering; redraws its preview if the visuals changed."""
     try:
@@ -149,21 +159,22 @@ def edit_storyboard(project_id: str, scene_id: str, edit: SceneEdit):
 
 
 @router.post("/render/{project_id}", response_model=RunResponse)
-def start_render(project_id: str, req: RenderRequest):
+def start_render(project_id: str, req: RenderRequest,
+                 user: User = Depends(require_project)):
     """Approve a storyboard and render the film."""
     state = sm.latest(project_id)
     if not state or not state.script:
         raise HTTPException(404, f"no storyboard to render for {project_id}")
     _check_engine(req.tts_engine)
     return _accepted(
-        "render", project_id, "rendering",
+        "render", project_id, "rendering", user,
         with_bgm=req.with_bgm, with_subtitles=req.with_subtitles,
         subtitle_language=req.subtitle_language, burn_subtitles=req.burn_subtitles,
         tts_engine=req.tts_engine,
     )
 
 
-@router.get("/subtitles/{project_id}")
+@router.get("/subtitles/{project_id}", dependencies=[Depends(require_project)])
 def subtitle_tracks(project_id: str):
     """WebVTT tracks for the browser player (MP4 soft subs are invisible there)."""
     state = sm.latest(project_id)
@@ -185,7 +196,7 @@ def subtitle_languages():
     return supported_names()
 
 
-@router.get("/state/{project_id}")
+@router.get("/state/{project_id}", dependencies=[Depends(require_project)])
 def get_state(project_id: str):
     state = sm.latest(project_id)
     if not state:
@@ -193,7 +204,7 @@ def get_state(project_id: str):
     return state.model_dump(mode="json")
 
 
-@router.get("/status/{project_id}")
+@router.get("/status/{project_id}", dependencies=[Depends(require_project)])
 def get_status(project_id: str):
     """Lightweight status — job state, phase progress and the last event."""
     return progress.snapshot(project_id) or {"project_id": project_id, "status": "unknown"}

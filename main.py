@@ -290,6 +290,77 @@ def cmd_worker(args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_password(prompt: str) -> str:
+    """Ask for a password without echoing it, or read it from a pipe."""
+    import getpass
+    if sys.stdin is not None and not sys.stdin.isatty():
+        return sys.stdin.readline().rstrip("\n")
+    return getpass.getpass(prompt)
+
+
+def cmd_users(args: argparse.Namespace) -> int:
+    """Manage accounts. This is the way back in if nobody can sign in."""
+    from auth import accounts, sessions
+
+    action = args.action or "list"
+    if action == "list":
+        people = accounts.list_users()
+        if not people:
+            print("no accounts yet - the first person to open the web UI becomes admin,")
+            print("or run: python main.py users create <email> --admin")
+            return 0
+        print(f"{'email':<36}{'role':<8}{'active':<8}last sign-in")
+        for u in people:
+            last = u.last_login_at.strftime("%Y-%m-%d %H:%M") if u.last_login_at else "never"
+            print(f"{u.email:<36}{u.role:<8}{'yes' if u.is_active else 'no':<8}{last}")
+        return 0
+
+    if action == "create":
+        password = args.password or _read_password(f"password for {args.email}: ")
+        try:
+            user = accounts.create(args.email, password,
+                                   role="admin" if args.admin else "user")
+        except accounts.AuthError as e:
+            print(f"error: {e}")
+            return 1
+        print(f"created {user.role} {user.email}")
+        return 0
+
+    user = accounts.get_by_email(args.email) if args.email else None
+    if user is None:
+        print(f"no account for {args.email}")
+        return 1
+
+    if action == "passwd":
+        password = args.password or _read_password(f"new password for {user.email}: ")
+        try:
+            accounts.set_password(user.id, password)
+        except accounts.AuthError as e:
+            print(f"error: {e}")
+            return 1
+        ended = sessions.revoke_all(user.id)
+        print(f"password changed; {ended} session(s) signed out")
+        return 0
+
+    if action == "role":
+        if args.value not in ("user", "admin"):
+            print("role must be 'user' or 'admin'")
+            return 1
+        accounts.set_role(user.id, args.value)
+        print(f"{user.email} is now {args.value}")
+        return 0
+
+    if action in ("enable", "disable"):
+        accounts.set_active(user.id, action == "enable")
+        if action == "disable":
+            sessions.revoke_all(user.id)
+        print(f"{user.email} {action}d")
+        return 0
+
+    print(f"unknown action {action!r}")
+    return 1
+
+
 def cmd_jobs(args: argparse.Namespace) -> int:
     """Show the queue."""
     import jobs as job_queue
@@ -447,6 +518,16 @@ def build_parser() -> argparse.ArgumentParser:
                     help=f"only these job kinds ({', '.join(JOB_KINDS)})")
     wp.set_defaults(fn=cmd_worker)
 
+    up = sub.add_parser("users", help="manage accounts (list, create, passwd, role)")
+    up.add_argument("action", nargs="?", default="list",
+                    choices=["list", "create", "passwd", "role", "enable", "disable"])
+    up.add_argument("email", nargs="?")
+    up.add_argument("value", nargs="?", help="for 'role': user | admin")
+    up.add_argument("--admin", action="store_true", help="for 'create'")
+    up.add_argument("--password", default=None,
+                    help="skip the prompt (visible in shell history - prefer the prompt)")
+    up.set_defaults(fn=cmd_users)
+
     jp = sub.add_parser("jobs", help="show the job queue")
     jp.add_argument("--project-id", default=None)
     jp.add_argument("--status", default=None,
@@ -471,7 +552,7 @@ def main() -> int:
     parser = build_parser()
     if len(sys.argv) > 1 and sys.argv[1] not in (
         "run", "plan", "storyboard", "restyle", "render", "serve", "edit",
-        "history", "list", "providers", "worker", "jobs", "-h", "--help"
+        "history", "list", "providers", "worker", "jobs", "users", "-h", "--help"
     ):
         # Treat first arg as a prompt for convenience.
         args = parser.parse_args(["run"] + sys.argv[1:])

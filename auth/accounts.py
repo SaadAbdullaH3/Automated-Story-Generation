@@ -1,0 +1,276 @@
+"""Accounts: who exists, who may sign in, and who owns which project."""
+from __future__ import annotations
+
+import os
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional
+
+from sqlalchemy import func, select
+
+from shared import db
+from shared.utils.logging import get_logger
+
+from . import passwords
+
+log = get_logger("auth")
+
+# After this many wrong passwords the account stops answering for a while.
+# Per account rather than per IP, because the attacker picks the IP.
+MAX_FAILED_ATTEMPTS = 8
+LOCKOUT_MINUTES = 15
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class AuthError(Exception):
+    """Sign-up or sign-in refused. The message is safe to show a user."""
+
+
+@dataclass
+class User:
+    id: str
+    email: str
+    role: str = "user"
+    is_active: bool = True
+    created_at: Optional[datetime] = None
+    last_login_at: Optional[datetime] = None
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == "admin"
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id, "email": self.email, "role": self.role,
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "last_login_at": (self.last_login_at.isoformat()
+                              if self.last_login_at else None),
+        }
+
+
+def _user(row) -> User:
+    return User(id=row["id"], email=row["email"], role=row["role"],
+                is_active=bool(row["is_active"]), created_at=row["created_at"],
+                last_login_at=row["last_login_at"])
+
+
+def normalise_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+
+def count() -> int:
+    with db.get_engine().connect() as c:
+        return int(c.execute(select(func.count()).select_from(db.users)).scalar() or 0)
+
+
+def signups_allowed() -> bool:
+    """The first account is always allowed; after that it is a deployment choice."""
+    if count() == 0:
+        return True
+    return os.getenv("ALLOW_SIGNUPS", "").strip().lower() in ("1", "true", "yes")
+
+
+def get(user_id: str) -> Optional[User]:
+    with db.get_engine().connect() as c:
+        row = c.execute(select(db.users).where(db.users.c.id == user_id)).mappings().first()
+    return _user(row) if row else None
+
+
+def get_by_email(email: str) -> Optional[User]:
+    with db.get_engine().connect() as c:
+        row = c.execute(
+            select(db.users).where(db.users.c.email == normalise_email(email))
+        ).mappings().first()
+    return _user(row) if row else None
+
+
+def list_users() -> List[User]:
+    with db.get_engine().connect() as c:
+        rows = c.execute(select(db.users).order_by(db.users.c.created_at.asc())).mappings().all()
+    return [_user(r) for r in rows]
+
+
+def create(email: str, password: str, role: str = "user") -> User:
+    """Create an account. The very first one is an admin, whatever is asked for."""
+    email = normalise_email(email)
+    if "@" not in email or len(email) < 3:
+        raise AuthError("that doesn't look like an email address")
+    try:
+        password_hash = passwords.hash_password(password)
+    except passwords.WeakPassword as e:
+        raise AuthError(str(e)) from e
+
+    first = count() == 0
+    if first:
+        role = "admin"
+    if role not in ("user", "admin"):
+        raise AuthError(f"unknown role {role!r}")
+
+    user = User(id="usr_" + uuid.uuid4().hex[:16], email=email, role=role,
+                created_at=utcnow())
+    from sqlalchemy.exc import IntegrityError
+    try:
+        with db.get_engine().begin() as c:
+            c.execute(db.users.insert().values(
+                id=user.id, email=user.email, password_hash=password_hash,
+                role=user.role, is_active=True, created_at=user.created_at,
+                failed_attempts=0,
+            ))
+    except IntegrityError as e:
+        # The unique index is the real guard — two simultaneous signups with
+        # the same address both pass a "does it exist" check.
+        raise AuthError("that email address is already registered") from e
+
+    log.info("created %s account %s", user.role, user.email)
+    if first:
+        adopted = adopt_unowned_projects(user.id)
+        if adopted:
+            log.info("first admin adopted %d existing project(s)", adopted)
+    return user
+
+
+def authenticate(email: str, password: str) -> User:
+    """Check a password. Raises AuthError with a deliberately vague message."""
+    generic = AuthError("email or password is incorrect")
+    with db.get_engine().connect() as c:
+        row = c.execute(
+            select(db.users).where(db.users.c.email == normalise_email(email))
+        ).mappings().first()
+
+    if row is None:
+        # Same work as a real check, so timing doesn't reveal who is registered.
+        passwords.dummy_verify()
+        raise generic
+
+    now = utcnow()
+    if row["locked_until"] and row["locked_until"] > now:
+        wait = int((row["locked_until"] - now).total_seconds() // 60) + 1
+        raise AuthError(f"too many failed attempts — try again in {wait} minute(s)")
+    if not row["is_active"]:
+        raise AuthError("that account is disabled")
+
+    if not passwords.verify(row["password_hash"], password):
+        _record_failure(row["id"], int(row["failed_attempts"] or 0))
+        raise generic
+
+    values = {"failed_attempts": 0, "locked_until": None, "last_login_at": now}
+    if passwords.needs_rehash(row["password_hash"]):
+        # Cost parameters moved on since this password was set.
+        values["password_hash"] = passwords.hash_password(password)
+    with db.get_engine().begin() as c:
+        c.execute(db.users.update().where(db.users.c.id == row["id"]).values(**values))
+    return _user({**row, "last_login_at": now})
+
+
+def _record_failure(user_id: str, previous: int) -> None:
+    attempts = previous + 1
+    values: dict = {"failed_attempts": attempts}
+    if attempts >= MAX_FAILED_ATTEMPTS:
+        values["locked_until"] = utcnow() + timedelta(minutes=LOCKOUT_MINUTES)
+        log.warning("account %s locked after %d failed attempts", user_id, attempts)
+    with db.get_engine().begin() as c:
+        c.execute(db.users.update().where(db.users.c.id == user_id).values(**values))
+
+
+def set_password(user_id: str, password: str) -> None:
+    try:
+        password_hash = passwords.hash_password(password)
+    except passwords.WeakPassword as e:
+        raise AuthError(str(e)) from e
+    with db.get_engine().begin() as c:
+        c.execute(db.users.update().where(db.users.c.id == user_id).values(
+            password_hash=password_hash, failed_attempts=0, locked_until=None))
+
+
+def set_role(user_id: str, role: str) -> None:
+    if role not in ("user", "admin"):
+        raise AuthError(f"unknown role {role!r}")
+    with db.get_engine().begin() as c:
+        c.execute(db.users.update().where(db.users.c.id == user_id).values(role=role))
+
+
+def set_active(user_id: str, active: bool) -> None:
+    with db.get_engine().begin() as c:
+        c.execute(db.users.update().where(db.users.c.id == user_id).values(is_active=active))
+
+
+# ---- project ownership -------------------------------------------------------
+
+def register_project(project_id: str, owner_id: Optional[str]) -> None:
+    """Record who a project belongs to. Idempotent; never changes an owner."""
+    with db.get_engine().begin() as c:
+        existing = c.execute(
+            select(db.projects.c.project_id)
+            .where(db.projects.c.project_id == project_id)
+        ).first()
+        if existing:
+            return
+        c.execute(db.projects.insert().values(
+            project_id=project_id, owner_id=owner_id, created_at=utcnow()))
+
+
+def owner_of(project_id: str) -> Optional[str]:
+    with db.get_engine().connect() as c:
+        return c.execute(
+            select(db.projects.c.owner_id)
+            .where(db.projects.c.project_id == project_id)
+        ).scalar()
+
+
+def may_access(user: Optional[User], project_id: str) -> bool:
+    """Admins see everything; everyone else sees only what they own.
+
+    A project with no row and no owner was made outside the web app (the CLI),
+    so it stays admin-only rather than becoming public by accident.
+    """
+    if user is None:
+        return False
+    if user.is_admin:
+        return True
+    return owner_of(project_id) == user.id
+
+
+def projects_for(user: User) -> Optional[List[str]]:
+    """Project ids this user may see, or None meaning 'no restriction' (admin)."""
+    if user.is_admin:
+        return None
+    with db.get_engine().connect() as c:
+        rows = c.execute(
+            select(db.projects.c.project_id)
+            .where(db.projects.c.owner_id == user.id)
+        ).all()
+    return [r[0] for r in rows]
+
+
+def adopt_unowned_projects(owner_id: str) -> int:
+    """Give the first admin the projects nobody owns.
+
+    That means projects made before accounts existed, and projects whose owner
+    was deleted — otherwise a removed account would strand its films with an
+    id that resolves to nobody.
+    """
+    from state_manager.state_manager import StateManager
+    with db.get_engine().connect() as c:
+        rows = c.execute(select(db.projects.c.project_id, db.projects.c.owner_id)).all()
+        live_users = {r[0] for r in c.execute(select(db.users.c.id)).all()}
+    owned = {pid for pid, owner in rows if owner and owner in live_users}
+    has_row = {pid for pid, _ in rows}
+
+    adopted = 0
+    for project_id in StateManager().list_projects():
+        if project_id in owned:
+            continue
+        if project_id in has_row:
+            with db.get_engine().begin() as c:
+                c.execute(db.projects.update()
+                          .where(db.projects.c.project_id == project_id)
+                          .values(owner_id=owner_id))
+        else:
+            register_project(project_id, owner_id)
+        adopted += 1
+    return adopted

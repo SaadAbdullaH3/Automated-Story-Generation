@@ -52,6 +52,7 @@ python main.py providers                   # which providers are detected
 python main.py serve --reload              # web UI on http://localhost:8000 (runs a worker too)
 python main.py worker                      # a worker process on its own (WORKER_INLINE=0 for the API)
 python main.py jobs [--status failed]      # the queue: what ran, what broke
+python main.py users [create <email> --admin | passwd <email> | role <email> admin]
 docker compose up --build --scale worker=3 # API + workers + Postgres
 python main.py edit <project_id>           # interactive edit REPL
 python main.py list | history <project_id>
@@ -77,6 +78,7 @@ Outputs go to `data/outputs/<project_id>/`, version snapshots to
 | Tool layer | `mcp/` | Internal tool registry (**not** the MCP protocol). Tools register on `import mcp.tools`; agents call `ToolExecutor().execute("audio.tts", ...)`. Each tool tries providers in order and falls back. |
 | Model settings | `config/providers.yaml` + `shared/providers.py` | **Which model serves each role** (story, edit_intent, translate, image, tts, music). Agents never name a model: they call `providers.chain(role)` and use the first available, falling through on failure. `concurrency:` per provider drives `shared/utils/parallel.run_jobs`. |
 | LLM client | `mcp/tools/llm_tools/llm_client.py` | `get_llm_client(role)` walks that role's chain: Gemini (google-genai, native JSON schema), Groq / OpenRouter / Ollama / OpenAI (all via the openai client), Anthropic, then `mock` = use the offline fallback. |
+| Accounts | `auth/` | `passwords.py` (argon2id), `accounts.py` (users, lockout, project ownership), `sessions.py` (opaque token in an HttpOnly cookie, stored hashed), `deps.py` (**the only place a request becomes a user** — routes depend on `require_user` / `require_project` rather than checking for themselves). |
 | Jobs | `jobs/` | **Runs are rows, not closures.** `queue.py` (enqueue/claim/heartbeat/cancel, one atomic UPDATE per claim) and `worker.py` (claims jobs, runs the orchestrator, publishes assets). Cancellation lands between pipeline steps, never mid-ffmpeg. |
 | Database | `shared/db.py` | One database for the version log and the queue. SQLite (WAL) by default, Postgres via `DATABASE_URL`, same SQL through SQLAlchemy Core. |
 | Assets | `shared/assets.py` | The only place a file path becomes a URL. Local disk by default; `STORAGE_URL=s3://bucket` publishes to any S3-compatible bucket (R2) so the worker and the API need not share a filesystem. |
@@ -282,6 +284,42 @@ Verified against a real Postgres 16 (`docker run postgres:16-alpine`):
   on R2/MinIO-style endpoints. `shared/assets.py` now uses path addressing
   whenever `S3_ENDPOINT_URL` is set.
 
+## M5 results (2026-10-01)
+
+233/233 tests pass, 37 of them new. Every project used to be visible to anyone
+who could reach the API, and `/assets/<project_id>/final_output.mp4` handed over
+the finished film to anyone who guessed an id.
+
+- **Sessions, not JWTs.** The cookie carries a random token; the database stores
+  only its SHA-256, so a dump can't be replayed as a login. Because a session is
+  a row, signing out actually signs out and an admin disabling an account ends
+  its sessions immediately — no denylist, no waiting for an expiry.
+- **argon2id** via argon2-cffi, with a dummy verify on unknown accounts so the
+  login endpoint can't be timed to enumerate who is registered. Wrong password
+  and unknown address return the identical 401. Eight failures locks the account
+  for 15 minutes.
+- **Enforced on the router, not per endpoint.** `dependencies=[Depends(require_user)]`
+  is declared where the routers are mounted, so a new endpoint is protected the
+  moment it is added. Project-scoped routes take `require_project`, which answers
+  **404 rather than 403** — a different status would confirm the id exists.
+- **Assets are no longer a static mount.** `/assets/{project_id}/{path}` checks
+  ownership, blocks traversal out of the outputs directory, and still answers
+  Range requests so seeking in the player works.
+- **The WebSocket authenticates too** (the cookie rides the handshake) and closes
+  with 1008 for a stranger; progress for any project was previously readable.
+- **CORS was `allow_origins=["*"]` with credentials.** Now no cross-origin request
+  is allowed unless `CORS_ORIGINS` names one.
+- First account is the admin and adopts every project that existed before
+  accounts did — including any whose owner was later deleted. Further sign-ups
+  need `ALLOW_SIGNUPS=1`; `python main.py users` is the way back in either way.
+- The session cookie is `Secure` only when the request arrived over HTTPS;
+  marking it Secure on plain HTTP makes the browser drop it, and the sign-in
+  appears to work and then doesn't.
+
+Verified in a browser: first-run setup screen, sign-in, the voice preview
+working through an authenticated session, sign-out returning to the gate. With
+no session, `/api/projects/` and a real film's `/assets/...` URL both answer 401.
+
 ## Known issues / next milestones
 
 - The Pollinations key has a 0 pollen budget, so the keyed endpoint 402s and the keyless
@@ -298,5 +336,8 @@ Verified against a real Postgres 16 (`docker run postgres:16-alpine`):
   back byte-identical over a presigned URL. It has **not** run against
   Cloudflare R2 itself — see below.
 - Two workers on one laptop contend for CPU; concurrency helps across hosts.
-- No authentication: every project is visible to anyone who can reach the API.
+- No password reset by email (no mail service at $0) — `python main.py users
+  passwd <email>` is the recovery path, which suits a self-hosted deployment.
+- No OAuth or two-factor; sessions are not yet listed and revokable per device
+  in the UI, though the API and the data model both support it.
 - Scene-scoped voice edits apply to that scene only until a later global audio edit re-renders it.

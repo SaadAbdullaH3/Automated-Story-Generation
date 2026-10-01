@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 import jobs
 from agents.orchestrator import ProgressEvent
 from jobs import queue, worker
+from tests.conftest import signed_in_client
 from shared import db
 
 
@@ -226,7 +227,7 @@ def api(isolated_dirs, monkeypatch):
     from state_manager.storage import VersionStore
     monkeypatch.setattr(pipeline_routes, "sm",
                         StateManager(VersionStore(isolated_dirs / "state.db")))
-    return TestClient(app_module.app)
+    return signed_in_client(app_module.app)
 
 
 def test_starting_a_run_queues_it_rather_than_running_it(api):

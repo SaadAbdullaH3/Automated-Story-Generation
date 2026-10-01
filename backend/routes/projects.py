@@ -1,8 +1,11 @@
 """List + browse projects."""
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from auth import accounts
+from auth.accounts import User
+from auth.deps import require_user
 from shared.assets import asset_url
 from state_manager.state_manager import StateManager
 
@@ -11,10 +14,14 @@ sm = StateManager()
 
 
 @router.get("/")
-def list_projects():
-    project_ids = sm.list_projects()
+def list_projects(user: User = Depends(require_user)):
+    """Only this account's projects. An admin sees every one, including the
+    ones the CLI made before anybody had an account."""
+    visible = accounts.projects_for(user)      # None = admin, no restriction
     out = []
-    for pid in project_ids:
+    for pid in sm.list_projects():
+        if visible is not None and pid not in visible:
+            continue
         state = sm.latest(pid)
         if not state:
             continue
