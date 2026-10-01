@@ -1,21 +1,20 @@
-"""Text-to-video / image-to-video tool.
+"""Image-to-video: a still becomes a moving shot.
 
-Real video generation. Provider precedence:
+The order comes from the `video` role in config/providers.yaml, not from
+whichever key happens to be set. Providers:
 
-1. fal.ai (recommended — free trial credits, simplest API)
-   Uses the official fal-client SDK which handles auth + queue automatically.
-   Models tried in order:
-     - "fal-ai/stable-video-diffusion"  image -> video (4 s clip)
-     - "fal-ai/fast-animatediff/text-to-video"  text -> video fallback
+  gemini_veo   Veo 3.1 through the Gemini API. The best of these by some way,
+               and the only one the project already holds a key for — but it
+               is BILLED PER SECOND OF VIDEO and is not in the Gemini free
+               tier, so it additionally requires VIDEO_BUDGET_OK=1. That flag
+               exists so nobody turns on a per-second bill by pasting an API
+               key they already had.
+  fal          fal.ai, ~$1 of free trial credit; SVD / AnimateDiff.
+  replicate    paid per second.
+  huggingface  free tier, noticeably lower quality.
 
-2. Replicate (paid; requires REPLICATE_API_TOKEN)
-   - "stability-ai/stable-video-diffusion"
-
-3. Hugging Face Inference API (free tier; lower quality)
-   - "damo-vilab/text-to-video-ms-1.7b"
-
-If none are configured, this tool returns ToolResult(success=False) so the
-caller falls back to the ffmpeg ken-burns animator.
+Returning success=False makes the caller fall back to the offline camera moves
+in agents/video_agent/camera.py, which is the `ffmpeg` entry in the chain.
 """
 from __future__ import annotations
 import base64
@@ -24,6 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from mcp.base_tool import BaseTool, ToolResult
+from shared import providers
 from shared.utils.logging import get_logger
 
 log = get_logger("text_to_video")
@@ -55,38 +55,92 @@ class TextToVideoTool(BaseTool):
         if out.suffix.lower() != ".mp4":
             out = out.with_suffix(".mp4")
 
-        if os.getenv("FAL_KEY") or os.getenv("FAL_API_KEY"):
+        tried = []
+        for spec in providers.chain("video"):
+            if spec.provider == "ffmpeg":
+                break           # the offline animator is the caller's job
+            runner = getattr(self, f"_{spec.provider}", None)
+            if runner is None:
+                continue
+            tried.append(spec.provider)
             try:
-                self._fal(prompt, image_path, out, duration_s, width, height, fps)
+                runner(prompt=prompt, image_path=image_path, out=out,
+                       duration_s=duration_s, width=width, height=height,
+                       fps=fps, model=spec.model)
                 return ToolResult(success=True, data=str(out),
-                                  metadata={"provider": "fal", "duration_s": duration_s})
+                                  metadata={"provider": spec.provider,
+                                            "model": spec.model,
+                                            "duration_s": duration_s})
             except Exception as e:  # noqa: BLE001
-                log.warning("fal.ai text->video failed (%s) — trying next provider", e)
+                log.warning("%s image->video failed (%s) — trying the next provider",
+                            spec.provider, e)
 
-        if os.getenv("REPLICATE_API_TOKEN"):
-            try:
-                self._replicate(prompt, image_path, out, duration_s, width, height)
-                return ToolResult(success=True, data=str(out),
-                                  metadata={"provider": "replicate"})
-            except Exception as e:  # noqa: BLE001
-                log.warning("replicate text->video failed (%s) — trying next provider", e)
-
-        if os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY"):
-            try:
-                self._huggingface(prompt, out, duration_s, width, height)
-                return ToolResult(success=True, data=str(out),
-                                  metadata={"provider": "huggingface"})
-            except Exception as e:  # noqa: BLE001
-                log.warning("hf text->video failed (%s) — no provider available", e)
-
-        return ToolResult(success=False,
-                          error="no text-to-video provider configured "
-                                "(set FAL_KEY, REPLICATE_API_TOKEN, or HF_TOKEN)")
+        return ToolResult(
+            success=False,
+            error=("no real-motion provider available"
+                   + (f" (tried: {', '.join(tried)})" if tried else
+                      " — see the `video` role in config/providers.yaml")))
 
     # ---- providers -------------------------------------------------------
 
-    def _fal(self, prompt: str, image_path: Optional[str], out: Path,
-             duration_s: float, w: int, h: int, fps: int) -> None:
+    def _gemini_veo(self, *, prompt: str, image_path: Optional[str], out: Path,
+                    duration_s: float, width: int, height: int, fps: int = 24,
+                    model: Optional[str] = None) -> None:
+        """Veo 3.1 through the Gemini API.
+
+        BILLED PER SECOND. The provider entry in config/providers.yaml requires
+        VIDEO_BUDGET_OK as well as the API key precisely so that holding a
+        Gemini key for the free-tier text models cannot quietly start a
+        per-second video bill.
+
+        Veo renders 16:9 or 9:16 at its own resolution; the caller normalises
+        the clip to the project's size afterwards.
+        """
+        import time
+
+        from google import genai
+        from google.genai import types
+
+        if not os.getenv("VIDEO_BUDGET_OK"):
+            raise RuntimeError(
+                "Veo is billed per second — set VIDEO_BUDGET_OK=1 to allow it")
+
+        client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+        config = types.GenerateVideosConfig(
+            number_of_videos=1,
+            duration_seconds=max(1, int(round(duration_s))),
+            aspect_ratio="16:9" if width >= height else "9:16",
+            # The pipeline lays its own dialogue and music over the shot.
+            generate_audio=False,
+        )
+        kwargs = {"model": model or "veo-3.1-fast-generate-preview",
+                  "prompt": prompt, "config": config}
+        if image_path and Path(image_path).exists():
+            # Animating the still we already generated keeps the character and
+            # the composition the rest of the scene was built from.
+            kwargs["image"] = types.Image.from_file(location=str(image_path))
+
+        operation = client.models.generate_videos(**kwargs)
+        log.info("veo: submitted, waiting for the render ...")
+        deadline = time.time() + 600
+        while not operation.done:
+            if time.time() > deadline:
+                raise TimeoutError("veo did not finish within 10 minutes")
+            time.sleep(10)
+            operation = client.operations.get(operation)
+
+        if getattr(operation, "error", None):
+            raise RuntimeError(f"veo failed: {operation.error}")
+        videos = getattr(operation.response, "generated_videos", None) or []
+        if not videos:
+            raise RuntimeError("veo returned no video")
+        client.files.download(file=videos[0].video)
+        videos[0].video.save(str(out))
+
+    def _fal(self, *, prompt: str, image_path: Optional[str], out: Path,
+             duration_s: float, width: int, height: int, fps: int,
+             model: Optional[str] = None) -> None:
+        w, h = width, height
         """Use fal-client SDK with base64 data URLs (no CDN upload required)."""
         import fal_client
         import requests
@@ -159,8 +213,10 @@ class TextToVideoTool(BaseTool):
                     last_err = e
             raise RuntimeError(f"all fal t2v models failed; last: {last_err}")
 
-    def _replicate(self, prompt: str, image_path: Optional[str], out: Path,
-                   duration_s: float, w: int, h: int) -> None:
+    def _replicate(self, *, prompt: str, image_path: Optional[str], out: Path,
+                   duration_s: float, width: int, height: int, fps: int = 24,
+                   model: Optional[str] = None) -> None:
+        w, h = width, height
         """Run text-to-video / image-to-video via the Replicate Python SDK."""
         import replicate
         import requests
@@ -204,8 +260,10 @@ class TextToVideoTool(BaseTool):
         r.raise_for_status()
         out.write_bytes(r.content)
 
-    def _huggingface(self, prompt: str, out: Path, duration_s: float,
-                     w: int, h: int) -> None:
+    def _huggingface(self, *, prompt: str, out: Path, duration_s: float,
+                     width: int, height: int, image_path: Optional[str] = None,
+                     fps: int = 24, model: Optional[str] = None) -> None:
+        w, h = width, height   # noqa: F841 - the endpoint sizes its own output
         import requests
         token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY")
         headers = {"Authorization": f"Bearer {token}"}

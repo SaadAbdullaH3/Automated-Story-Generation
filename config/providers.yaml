@@ -113,6 +113,37 @@ roles:
       concurrency: 1
     - provider: silent            # last resort: silence of the right length
 
+  # ---- Real motion: a still becomes a moving shot -------------------------
+  # Everything here except `ffmpeg` costs money per clip, so the chain ends on
+  # the offline animator rather than failing. `ffmpeg` is not a downgrade to be
+  # ashamed of: it renders supersampled camera moves (see video_agent/camera.py).
+  video:
+    - provider: gemini_veo        # Veo 3.1 via the Gemini API. BILLED PER SECOND
+      model: veo-3.1-fast-generate-preview
+      requires: [GEMINI_API_KEY, VIDEO_BUDGET_OK]   # the second is a deliberate opt-in
+      concurrency: 1
+    - provider: fal               # ~$1 of free trial credit at fal.ai
+      model: fal-ai/stable-video-diffusion
+      requires: [FAL_KEY|FAL_API_KEY]
+      concurrency: 2
+    - provider: replicate         # paid per second
+      requires: [REPLICATE_API_TOKEN]
+      concurrency: 2
+    - provider: huggingface       # free tier, lower quality
+      requires: [HF_TOKEN|HUGGINGFACE_API_KEY]
+      concurrency: 1
+    - provider: ffmpeg            # offline camera moves on the still. Always works.
+
+  # ---- Lip sync -------------------------------------------------------------
+  lipsync:
+    - provider: fal
+      requires: [FAL_KEY|FAL_API_KEY]
+      concurrency: 2
+    - provider: replicate
+      requires: [REPLICATE_API_TOKEN]
+      concurrency: 2
+    - provider: none              # heuristic mouth animation in the animator
+
   # ---- Background music ----------------------------------------------------
   music:
     - provider: ffmpeg            # mood-keyed synthesised bed, offline
