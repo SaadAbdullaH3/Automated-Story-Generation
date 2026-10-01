@@ -9,7 +9,7 @@ from shared.utils.files import ensure_dir, write_json, read_json
 from shared.utils.logging import get_logger
 
 from .snapshot import snapshot_assets, restore_assets
-from .storage import SqliteStorage
+from .storage import VersionStore
 
 
 log = get_logger("state_manager")
@@ -18,8 +18,8 @@ log = get_logger("state_manager")
 class StateManager:
     """Versioned, append-only state store across all pipeline phases."""
 
-    def __init__(self, storage: Optional[SqliteStorage] = None):
-        self.storage = storage or SqliteStorage()
+    def __init__(self, storage: Optional[VersionStore] = None):
+        self.storage = storage or VersionStore()
 
     # ---- snapshot --------------------------------------------------------
 

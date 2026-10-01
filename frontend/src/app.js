@@ -4,9 +4,11 @@ const $ = (id) => document.getElementById(id);
 
 const state = {
   projectId: null,
+  jobId: null,
   ws: null,
   intent: null,
   storyboard: null,
+  voices: { default: "", engines: [] },
 };
 
 const PHASES = ["story", "storyboard", "audio", "video"];
@@ -58,6 +60,11 @@ function promptBody() {
   };
 }
 
+// "" means: let config/providers.yaml decide.
+function chosenEngine() {
+  return $("voice-engine").value || null;
+}
+
 async function startPlan() {
   const body = promptBody();
   if (!body.prompt) {
@@ -76,6 +83,7 @@ async function startPlan() {
   }).then((r) => r.json());
   state.projectId = res.project_id;
   appendLog(`project_id = ${res.project_id}`);
+  trackJob(res);
   connectWs(res.project_id);
 }
 
@@ -153,8 +161,10 @@ async function renderStoryboard() {
       with_bgm: $("bgm").checked,
       with_subtitles: $("subs").checked,
       subtitle_language: $("sub-lang").value,
+      tts_engine: chosenEngine(),
     }),
   }).then((r) => r.json());
+  trackJob(res);
   connectWs(res.project_id);
 }
 
@@ -179,16 +189,55 @@ async function startRun() {
     with_bgm: $("bgm").checked,
     with_subtitles: $("subs").checked,
     subtitle_language: $("sub-lang").value,
+    tts_engine: chosenEngine(),
   };
   appendLog(`POST /api/pipeline/run …`);
   const res = await fetch("/api/pipeline/run", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  }).then((r) => r.json());
-  state.projectId = res.project_id;
-  appendLog(`project_id = ${res.project_id}`);
-  connectWs(res.project_id);
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(`Could not start: ${err.detail || res.statusText}`);
+    return;
+  }
+  const started = await res.json();
+  state.projectId = started.project_id;
+  appendLog(`project_id = ${started.project_id}`);
+  trackJob(started);
+  connectWs(started.project_id);
+}
+
+// ---- jobs ------------------------------------------------------------------
+
+function trackJob(res) {
+  if (!res || !res.job_id) return;
+  state.jobId = res.job_id;
+  const badge = $("jobBadge");
+  badge.textContent = `job ${res.job_id} · ${res.status}`;
+  badge.style.display = "";
+  $("cancelJob").style.display = "";
+  appendLog(`queued as ${res.job_id} — a worker picks it up`);
+}
+
+function jobFinished(label) {
+  if (state.jobId) $("jobBadge").textContent = `job ${state.jobId} · ${label}`;
+  $("cancelJob").style.display = "none";
+}
+
+async function cancelJob() {
+  if (!state.jobId) return;
+  $("cancelJob").disabled = true;
+  try {
+    const res = await fetch(`/api/jobs/${state.jobId}/cancel`, { method: "POST" })
+      .then((r) => r.json());
+    appendLog(`cancel requested — ${res.status}`);
+    // A running job stops at its next step, so the badge waits for the event.
+    if (res.status === "cancelled") jobFinished("cancelled");
+  } finally {
+    $("cancelJob").disabled = false;
+  }
 }
 
 function connectWs(projectId) {
@@ -212,8 +261,12 @@ function connectWs(projectId) {
       setRerunButtons(false);
     }
     if (ev.phase === "complete") {
+      jobFinished("done");
       onPipelineComplete(projectId, ev.payload || {});
+    } else if (ev.phase === "cancelled") {
+      jobFinished("cancelled");
     } else if (ev.phase === "error") {
+      jobFinished("failed");
       alert(`Pipeline failed: ${ev.message}`);
     }
   };
@@ -394,6 +447,72 @@ async function loadLanguages() {
   }
 }
 
+// ---- voices ----------------------------------------------------------------
+
+async function loadVoices() {
+  try {
+    state.voices = await fetch("/api/voices/").then((r) => r.json());
+  } catch (e) {
+    return; // the picker just stays on "Auto"
+  }
+  const auto = state.voices.engines.find((e) => e.is_default);
+  $("voice-engine").innerHTML =
+    `<option value="">Auto${auto ? ` (${escapeHtml(auto.label)})` : ""}</option>` +
+    state.voices.engines
+      .map(
+        (e) =>
+          `<option value="${escapeHtml(e.name)}"${e.available ? "" : " disabled"}>` +
+          `${escapeHtml(e.label)}${e.available ? "" : " — unavailable"}</option>`,
+      )
+      .join("");
+  fillVoiceSamples();
+}
+
+function currentEngine() {
+  const name = $("voice-engine").value || state.voices.default || "";
+  return state.voices.engines.find((e) => e.name === name) || null;
+}
+
+function fillVoiceSamples() {
+  const engine = currentEngine();
+  $("voice-sample").innerHTML = (engine ? engine.voices : [])
+    .map((v) => `<option value="${escapeHtml(v.id)}">${escapeHtml(v.label)}</option>`)
+    .join("");
+  const note = $("voiceNote");
+  if (!engine) note.textContent = "";
+  else if (!engine.available)
+    note.textContent = `${engine.label}: ${engine.unavailable_reason}`;
+  else note.textContent = engine.summary;
+}
+
+async function previewVoice() {
+  const engine = currentEngine();
+  if (!engine) return;
+  const btn = $("previewVoice");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/voices/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ engine: engine.name, voice: $("voice-sample").value }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      $("voiceNote").textContent = body.detail || "Could not render a sample.";
+      return;
+    }
+    if (body.fell_back) {
+      $("voiceNote").textContent =
+        `${engine.label} could not speak — you are hearing ${body.engine} instead.`;
+    }
+    const player = $("voicePlayer");
+    player.src = `${body.url}?v=${Date.now()}`;
+    player.play().catch(() => {});
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ---- provider badge --------------------------------------------------------
 
 async function loadProviderBadge() {
@@ -429,7 +548,11 @@ document.addEventListener("DOMContentLoaded", () => {
   $("rerunVideo").addEventListener("click", () => rerunPhase("video"));
   $("applyEdit").addEventListener("click", applyEdit);
   $("classifyEdit").addEventListener("click", classifyEdit);
+  $("cancelJob").addEventListener("click", cancelJob);
+  $("previewVoice").addEventListener("click", previewVoice);
+  $("voice-engine").addEventListener("change", fillVoiceSamples);
   bindChips();
   loadProviderBadge();
   loadLanguages();
+  loadVoices();
 });

@@ -1,18 +1,24 @@
-"""HTTP endpoints to launch and re-run the main pipeline."""
+"""HTTP endpoints to launch and re-run the main pipeline.
+
+Starting a run enqueues a job and returns immediately; a worker picks it up.
+The response carries the job id so the caller can follow, cancel or retry it.
+"""
 from __future__ import annotations
 from pathlib import PureWindowsPath   # splits on both "\" and "/"
 from typing import Dict, Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+import jobs
+from shared import voices
 from shared.languages import iso639_1, supported_names
 from shared.utils.files import project_dir
 from shared.utils.ids import new_project_id
 from shared.utils.logging import get_logger
 from state_manager.state_manager import StateManager
 
-from ..services import run_registry, pipeline_service
+from ..services import pipeline_service, progress
 
 router = APIRouter()
 log = get_logger("api.pipeline")
@@ -26,10 +32,12 @@ class RunRequest(BaseModel):
     with_bgm: bool = True
     with_subtitles: bool = True
     subtitle_language: str = "English"
+    tts_engine: Optional[str] = None   # None = the provider chain's choice
 
 
 class RunResponse(BaseModel):
     project_id: str
+    job_id: str
     status: str
     websocket: str
 
@@ -39,44 +47,46 @@ class PhaseRerunRequest(BaseModel):
     phase: str  # "story" | "audio" | "video"
 
 
+def _check_engine(name: Optional[str]) -> None:
+    """Reject an unusable voice engine now, not three minutes into a render."""
+    if not name:
+        return
+    engine = voices.get(name)
+    if engine is None:
+        raise HTTPException(400, f"unknown voice engine {name!r}")
+    reason = voices.unavailable_reason(engine)
+    if reason:
+        raise HTTPException(409, f"{engine.label} is not available here: {reason}")
+
+
+def _accepted(kind: str, project_id: str, status: str, **payload) -> RunResponse:
+    payload = {k: v for k, v in payload.items() if v is not None}
+    job = jobs.enqueue(kind, project_id, payload)
+    log.info("queued %s %s for %s", kind, job.id, project_id)
+    return RunResponse(project_id=project_id, job_id=job.id, status=status,
+                       websocket=f"/ws/progress/{project_id}")
+
+
 @router.post("/run", response_model=RunResponse)
-def start_run(req: RunRequest, background: BackgroundTasks):
-    """Start a full pipeline run; progress streams over /ws/progress/{project_id}."""
-    project_id = new_project_id()
-    run_registry.create(project_id)
-    background.add_task(
-        pipeline_service.run_full_async,
-        prompt=req.prompt,
-        project_id=project_id,
-        target_duration_s=req.target_duration_s,
-        scene_count=req.scene_count,
-        with_bgm=req.with_bgm,
-        with_subtitles=req.with_subtitles,
-        subtitle_language=req.subtitle_language,
-    )
-    return RunResponse(
-        project_id=project_id,
-        status="running",
-        websocket=f"/ws/progress/{project_id}",
+def start_run(req: RunRequest):
+    """Queue a full pipeline run; progress streams over /ws/progress/{project_id}."""
+    _check_engine(req.tts_engine)
+    return _accepted(
+        "run_full", new_project_id(), "queued",
+        prompt=req.prompt, target_duration_s=req.target_duration_s,
+        scene_count=req.scene_count, with_bgm=req.with_bgm,
+        with_subtitles=req.with_subtitles, subtitle_language=req.subtitle_language,
+        tts_engine=req.tts_engine,
     )
 
 
 @router.post("/rerun", response_model=RunResponse)
-def rerun_phase(req: PhaseRerunRequest, background: BackgroundTasks):
+def rerun_phase(req: PhaseRerunRequest):
     if req.phase not in ("story", "audio", "video"):
         raise HTTPException(400, f"unknown phase {req.phase}")
     if not sm.latest(req.project_id):
         raise HTTPException(404, f"project {req.project_id} not found")
-    run_registry.create(req.project_id)
-    background.add_task(
-        pipeline_service.rerun_phase_async,
-        project_id=req.project_id, phase=req.phase,
-    )
-    return RunResponse(
-        project_id=req.project_id,
-        status="running",
-        websocket=f"/ws/progress/{req.project_id}",
-    )
+    return _accepted("rerun_phase", req.project_id, "queued", phase=req.phase)
 
 
 class PlanRequest(BaseModel):
@@ -98,23 +108,17 @@ class RenderRequest(BaseModel):
     with_subtitles: bool = True
     subtitle_language: str = "English"
     burn_subtitles: bool = True
+    tts_engine: Optional[str] = None
 
 
 @router.post("/plan", response_model=RunResponse)
-def start_plan(req: PlanRequest, background: BackgroundTasks):
+def start_plan(req: PlanRequest):
     """Write the script + preview images only; render is a separate, approved step."""
-    project_id = new_project_id()
-    run_registry.create(project_id)
-    background.add_task(
-        pipeline_service.plan_async,
-        prompt=req.prompt,
-        project_id=project_id,
-        target_duration_s=req.target_duration_s,
-        scene_count=req.scene_count,
-        with_preview=req.with_preview,
+    return _accepted(
+        "plan", new_project_id(), "planning",
+        prompt=req.prompt, target_duration_s=req.target_duration_s,
+        scene_count=req.scene_count, with_preview=req.with_preview,
     )
-    return RunResponse(project_id=project_id, status="planning",
-                       websocket=f"/ws/progress/{project_id}")
 
 
 @router.get("/storyboard/{project_id}")
@@ -147,22 +151,18 @@ def edit_storyboard(project_id: str, scene_id: str, edit: SceneEdit):
 
 
 @router.post("/render/{project_id}", response_model=RunResponse)
-def start_render(project_id: str, req: RenderRequest, background: BackgroundTasks):
+def start_render(project_id: str, req: RenderRequest):
     """Approve a storyboard and render the film."""
     state = sm.latest(project_id)
     if not state or not state.script:
         raise HTTPException(404, f"no storyboard to render for {project_id}")
-    run_registry.create(project_id)
-    background.add_task(
-        pipeline_service.render_async,
-        project_id=project_id,
-        with_bgm=req.with_bgm,
-        with_subtitles=req.with_subtitles,
-        subtitle_language=req.subtitle_language,
-        burn_subtitles=req.burn_subtitles,
+    _check_engine(req.tts_engine)
+    return _accepted(
+        "render", project_id, "rendering",
+        with_bgm=req.with_bgm, with_subtitles=req.with_subtitles,
+        subtitle_language=req.subtitle_language, burn_subtitles=req.burn_subtitles,
+        tts_engine=req.tts_engine,
     )
-    return RunResponse(project_id=project_id, status="rendering",
-                       websocket=f"/ws/progress/{project_id}")
 
 
 @router.get("/subtitles/{project_id}")
@@ -197,6 +197,5 @@ def get_state(project_id: str):
 
 @router.get("/status/{project_id}")
 def get_status(project_id: str):
-    """Lightweight status — phase progress + last event."""
-    snapshot = run_registry.snapshot(project_id)
-    return snapshot or {"project_id": project_id, "status": "unknown"}
+    """Lightweight status — job state, phase progress and the last event."""
+    return progress.snapshot(project_id) or {"project_id": project_id, "status": "unknown"}

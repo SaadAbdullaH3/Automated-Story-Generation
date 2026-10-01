@@ -23,6 +23,7 @@ for _credential in ("GEMINI_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "OPE
                     "REPLICATE_API_TOKEN", "HF_TOKEN", "HUGGINGFACE_API_KEY",
                     "OLLAMA_HOST", "SD_API_URL", "LOCAL_SD", "MYMEMORY_EMAIL"):
     os.environ.pop(_credential, None)
+os.environ.pop("DATABASE_URL", None)
 # Only the languages a test asks for get subtitle tracks.
 os.environ.pop("SUBTITLE_EXTRA_LANGUAGES", None)
 
@@ -32,14 +33,21 @@ import mcp.tools  # noqa: F401, E402
 
 @pytest.fixture
 def isolated_dirs(tmp_path, monkeypatch):
-    """Point outputs, snapshots and the version DB at a temp dir."""
+    """Point outputs, snapshots and the database at a temp dir."""
     import shared.constants as constants
+    from shared import db
     monkeypatch.setattr(constants, "OUTPUTS_DIR", tmp_path / "out")
     monkeypatch.setattr(constants, "STATE_DIR", tmp_path / "state")
     monkeypatch.setattr(constants, "DB_PATH", tmp_path / "state.db")
+    # A DATABASE_URL in the environment would send the test's writes to a real
+    # database; shared.db falls back to constants.DB_PATH without it.
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     constants.OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     constants.STATE_DIR.mkdir(parents=True, exist_ok=True)
-    return tmp_path
+    yield tmp_path
+    # Close the engines holding this tmp_path's SQLite files open, or Windows
+    # refuses to delete them.
+    db.dispose_all()
 
 
 def silence_tts(tools) -> list:
@@ -58,6 +66,23 @@ def silence_tts(tools) -> list:
 
     tools.execute = patched
     return calls
+
+
+def run_queued_jobs(orchestrator=None, limit: int = 10) -> list:
+    """Drain the job queue the way a worker process would.
+
+    Runs are queued by the API, not executed by it, so a test that posts to
+    /api/pipeline/... has to play the worker.
+    """
+    from jobs import queue, worker
+    ran = []
+    for _ in range(limit):
+        job = queue.claim("test-worker")
+        if job is None:
+            break
+        worker.run_job(job, orchestrator=orchestrator)
+        ran.append(job)
+    return ran
 
 
 @pytest.fixture

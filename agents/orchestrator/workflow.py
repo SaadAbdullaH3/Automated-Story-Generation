@@ -55,6 +55,7 @@ class PipelineOrchestrator:
         with_subtitles: bool = True,
         subtitle_language: str = "English",
         burn_subtitles: bool = True,
+        tts_engine: Optional[str] = None,
         project_id: Optional[str] = None,
         use_text_to_video: Optional[bool] = None,
         use_lip_sync: Optional[bool] = None,
@@ -72,6 +73,7 @@ class PipelineOrchestrator:
             with_subtitles=with_subtitles,
             subtitle_language=subtitle_language,
             burn_subtitles=burn_subtitles,
+            tts_engine=tts_engine,
             use_text_to_video=use_text_to_video,
             use_lip_sync=use_lip_sync,
             width=width, height=height, fps=fps,
@@ -206,6 +208,7 @@ class PipelineOrchestrator:
         with_subtitles: bool = True,
         subtitle_language: str = "English",
         burn_subtitles: bool = True,
+        tts_engine: Optional[str] = None,
         use_text_to_video: Optional[bool] = None,
         use_lip_sync: Optional[bool] = None,
     ) -> PipelineState:
@@ -216,6 +219,7 @@ class PipelineOrchestrator:
         emit = on_event or (lambda _e: None)
         ctx = RunContext(state=state, with_bgm=with_bgm, with_subtitles=with_subtitles,
                          subtitle_language=subtitle_language, burn_subtitles=burn_subtitles,
+                         tts_engine=tts_engine,
                          use_text_to_video=use_text_to_video, use_lip_sync=use_lip_sync)
         try:
             self._render_graph().run(
@@ -266,6 +270,8 @@ class PipelineOrchestrator:
         # Re-runs keep the project's existing settings.
         v, a = state.video, state.audio
         with_bgm = a.bgm_enabled if a else True
+        # Re-runs keep the voice engine the film was recorded with.
+        tts_engine = a.voice_configs[0].engine if (a and a.voice_configs) else None
         video_kwargs = dict(
             with_subtitles=v.has_subtitles if v else True,
             subtitle_language=v.subtitle_language if v else "English",
@@ -285,7 +291,7 @@ class PipelineOrchestrator:
                                if state.script else 45,
                                scene_count=len(state.script.scenes) if state.script else 4)
             elif step == "audio":
-                self.audio.run(state, with_bgm=with_bgm)
+                self.audio.run(state, with_bgm=with_bgm, tts_engine=tts_engine)
             else:
                 self.video.run(state, **video_kwargs)
             emit(ProgressEvent(phase=step, status="complete", project_id=project_id,
@@ -311,7 +317,8 @@ class PipelineOrchestrator:
                                        scene_count=c.scene_count),
               next_=["phase2_audio"], entry=True)
         g.add("phase2_audio",
-              lambda c: self.audio.run(c.state, with_bgm=c.with_bgm),
+              lambda c: self.audio.run(c.state, with_bgm=c.with_bgm,
+                                       tts_engine=c.tts_engine),
               next_=["phase3_video"])
         g.add("phase3_video",
               lambda c: self.video.run(
@@ -328,7 +335,8 @@ class PipelineOrchestrator:
         """Phases 2-3 only — used when rendering an approved storyboard."""
         g = PipelineGraph()
         g.add("phase2_audio",
-              lambda c: self.audio.run(c.state, with_bgm=c.with_bgm),
+              lambda c: self.audio.run(c.state, with_bgm=c.with_bgm,
+                                       tts_engine=c.tts_engine),
               next_=["phase3_video"], entry=True)
         g.add("phase3_video",
               lambda c: self.video.run(

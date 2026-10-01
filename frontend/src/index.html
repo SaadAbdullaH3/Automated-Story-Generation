@@ -32,6 +32,19 @@
           <option value="English">English</option>
         </select>
       </div>
+      <div class="row voice-row">
+        <label>Voice
+          <!-- Engines come from /api/voices; unusable ones are shown disabled
+               with the reason, rather than hidden. -->
+          <select id="voice-engine"><option value="">Auto</option></select>
+        </label>
+        <label>Sample
+          <select id="voice-sample"></select>
+        </label>
+        <button id="previewVoice" class="secondary small" type="button">&#9658; Hear it</button>
+        <audio id="voicePlayer" preload="none"></audio>
+      </div>
+      <p class="hint" id="voiceNote"></p>
       <div class="row">
         <button id="planBtn" class="primary">Plan storyboard</button>
         <button id="runBtn" class="secondary">Generate everything</button>
@@ -63,6 +76,10 @@
           <div class="label">Video Composition</div>
           <div class="bar"><span></span></div>
         </div>
+      </div>
+      <div class="row">
+        <span id="jobBadge" class="job-badge" style="display:none"></span>
+        <button class="danger" id="cancelJob" style="display:none">Cancel run</button>
       </div>
       <div class="row">
         <button class="secondary" id="rerunStory" disabled>Re-run Story</button>

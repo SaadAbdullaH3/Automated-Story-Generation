@@ -1,0 +1,162 @@
+"""The worker: claims jobs and runs the pipeline.
+
+Runs either as its own process (`python main.py worker`) or as a thread inside
+the API process (the default, so `main.py serve` alone still works).
+
+Cancellation is cooperative: the orchestrator emits a progress event between
+steps, and that is where a cancelled job stops — no thread is ever killed
+mid-ffmpeg, so a cancelled run leaves no half-written file behind.
+"""
+from __future__ import annotations
+
+import os
+import socket
+import threading
+import time
+import uuid
+from typing import Callable, Optional, Sequence
+
+from agents.orchestrator import ProgressEvent
+from shared.utils.logging import get_logger
+
+from . import queue
+
+log = get_logger("worker")
+
+# kind -> orchestrator method. Every one takes project_id and on_event as
+# keyword arguments; the rest of the call is the job's payload.
+METHODS = {
+    "run_full": "run_full",
+    "plan": "plan",
+    "render": "render",
+    "rerun_phase": "re_run_phase",
+}
+
+HEARTBEAT_S = 15.0
+
+
+class JobCancelled(Exception):
+    """Raised inside a running job when someone asks it to stop."""
+
+
+def worker_id() -> str:
+    return f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:4]}"
+
+
+class _Heartbeat:
+    """Checks in while a job runs, and notices a cancel request between events."""
+
+    def __init__(self, job_id: str, interval: float = HEARTBEAT_S):
+        self.job_id = job_id
+        self.interval = interval
+        self.cancelled = threading.Event()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True,
+                                        name=f"heartbeat-{job_id}")
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self.interval):
+            try:
+                if not queue.heartbeat(self.job_id):
+                    self.cancelled.set()
+            except Exception:  # noqa: BLE001 — a flaky DB must not kill the run
+                log.debug("heartbeat failed for %s", self.job_id, exc_info=True)
+
+    def __enter__(self) -> "_Heartbeat":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self._stop.set()
+
+
+def _event_sink(job: queue.Job, beat: _Heartbeat) -> Callable[[ProgressEvent], None]:
+    def push(ev: ProgressEvent) -> None:
+        queue.append_event(job.id, job.project_id, phase=ev.phase,
+                           status=ev.status, message=ev.message,
+                           progress=ev.progress, payload=ev.payload)
+        if beat.cancelled.is_set() or not queue.heartbeat(job.id):
+            raise JobCancelled(f"{job.id} cancelled")
+    return push
+
+
+def run_job(job: queue.Job, orchestrator=None) -> str:
+    """Run one claimed job to completion. Returns its final status."""
+    from backend.services.pipeline_service import orchestrator as shared_orchestrator
+    orch = orchestrator or shared_orchestrator()
+    method = getattr(orch, METHODS[job.kind])
+    log.info("job %s (%s) started for %s", job.id, job.kind, job.project_id)
+
+    with _Heartbeat(job.id) as beat:
+        push = _event_sink(job, beat)
+        try:
+            method(project_id=job.project_id, on_event=push, **(job.payload or {}))
+        except JobCancelled:
+            queue.mark_cancelled(job.id)
+            queue.append_event(job.id, job.project_id, phase="cancelled",
+                               status="cancelled", message="cancelled", progress=1.0)
+            log.info("job %s cancelled", job.id)
+            return "cancelled"
+        except Exception as e:  # noqa: BLE001 — a failed run must not kill the worker
+            detail = f"{type(e).__name__}: {e}"
+            log.exception("job %s failed", job.id)
+            status = queue.fail(job.id, detail)
+            queue.append_event(job.id, job.project_id, phase="error",
+                               status="failed" if status == "failed" else "retrying",
+                               message=detail, progress=1.0)
+            return status
+
+    queue.complete(job.id)
+    log.info("job %s finished", job.id)
+    return "succeeded"
+
+
+def run_once(worker: Optional[str] = None,
+             kinds: Optional[Sequence[str]] = None) -> Optional[queue.Job]:
+    """Claim and run a single job. Returns None if the queue was empty."""
+    job = queue.claim(worker or worker_id(), kinds=kinds)
+    if job is None:
+        return None
+    run_job(job)
+    return job
+
+
+def run_forever(poll_interval: float = 1.0, kinds: Optional[Sequence[str]] = None,
+                stop: Optional[threading.Event] = None,
+                sweep_interval_s: float = 60.0) -> None:
+    """Claim jobs until told to stop, recovering jobs abandoned by dead workers."""
+    me = worker_id()
+    stop = stop or threading.Event()
+    log.info("worker %s up (kinds=%s)", me, ",".join(kinds) if kinds else "all")
+    last_sweep = 0.0
+    while not stop.is_set():
+        now = time.monotonic()
+        if now - last_sweep > sweep_interval_s:
+            last_sweep = now
+            try:
+                recovered = queue.requeue_stale()
+                if recovered:
+                    log.warning("requeued %d job(s) from a stopped worker", recovered)
+            except Exception:  # noqa: BLE001
+                log.debug("stale sweep failed", exc_info=True)
+        try:
+            job = queue.claim(me, kinds=kinds)
+        except Exception:  # noqa: BLE001 — e.g. the DB is briefly unavailable
+            log.exception("could not claim a job")
+            stop.wait(poll_interval)
+            continue
+        if job is None:
+            stop.wait(poll_interval)
+            continue
+        run_job(job)
+    log.info("worker %s stopped", me)
+
+
+def start_inline(poll_interval: float = 1.0) -> tuple[threading.Thread, threading.Event]:
+    """Run a worker inside this process (what `main.py serve` does by default)."""
+    stop = threading.Event()
+    thread = threading.Thread(target=run_forever, kwargs={
+        "poll_interval": poll_interval, "stop": stop,
+    }, daemon=True, name="inline-worker")
+    thread.start()
+    return thread, stop

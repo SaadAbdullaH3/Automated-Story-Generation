@@ -1,4 +1,4 @@
-"""Backend service helpers — async pipeline runner + in-memory run registry."""
-from . import pipeline_service, run_registry
+"""Backend services: the shared orchestrator and the progress stream."""
+from . import pipeline_service, progress
 
-__all__ = ["pipeline_service", "run_registry"]
+__all__ = ["pipeline_service", "progress"]

@@ -13,6 +13,8 @@ class RunContext:
     target_duration_s: int = 45
     scene_count: int = 4
     with_bgm: bool = True
+    # None = whatever config/providers.yaml picks for the tts role.
+    tts_engine: Optional[str] = None
     with_subtitles: bool = True
     subtitle_language: str = "English"
     burn_subtitles: bool = True

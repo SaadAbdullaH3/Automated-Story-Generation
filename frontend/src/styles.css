@@ -278,3 +278,18 @@ button.secondary { color: var(--accent); }
 .sb-line { display: flex; gap: 6px; align-items: center; }
 .sb-line span { flex: 0 0 82px; font-size: 11px; color: #8b93a7; }
 .sb-frame.saving { opacity: 0.55; }
+
+/* ---- voice picker + job controls (M4) ---- */
+.voice-row select { max-width: 190px; }
+.voice-row audio { display: none; }
+button.small { padding: 6px 10px; font-size: 12px; }
+button.danger { color: #ff8a8a; border-color: #5a2a2a; }
+button.danger:hover:not(:disabled) { background: #2a1818; }
+.job-badge {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted, #8b93a7);
+  border: 1px solid var(--border, #2a2f3d);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
