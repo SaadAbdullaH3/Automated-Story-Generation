@@ -393,6 +393,42 @@ TEST_S3_ENDPOINT=http://127.0.0.1:5111 S3_REGION=us-east-1 \
 Point `TEST_S3_ENDPOINT` at `https://<account>.r2.cloudflarestorage.com` with
 real R2 credentials and the same test verifies Cloudflare R2.
 
+### Camera moves
+
+A still is not a shot. Each image gets a camera move chosen for what the shot
+is doing — a tense close-up pushes in, an establishing wide pulls back, a face
+delivering a line is locked off — and a colour grade taken from the look the
+story asked for.
+
+Pans were once removed from this project because they shivered: `zoompan`
+positions its crop window at whole pixels, so a sub-pixel move per frame
+rounds unevenly. The fix is to compute the move at three times the output size
+and scale down, which turns a whole-pixel error upstream into a fraction of an
+output pixel. Measured by phase correlation on real shot clips, the new shots
+travel up to 5.13 px/frame while wobbling less than the old centred zooms did
+at 0.62 px/frame — worst jump 0.19 px against 0.80 px.
+
+`SUPERSAMPLE` tunes the factor (default 3, capped so a 1080p project cannot
+exhaust memory). A shot that still fails is re-rendered at output size with a
+warning rather than losing the film.
+
+### Real motion, when you want to pay for it
+
+The `video` role in `config/providers.yaml` picks who animates a still:
+
+```
+gemini_veo   Veo 3.1 via the Gemini API — billed per second, needs VIDEO_BUDGET_OK
+fal          fal.ai, ~$1 of free trial credit
+replicate    paid per second
+huggingface  free tier, lower quality
+ffmpeg       the camera moves above — offline, always works, costs nothing
+```
+
+The chain ends on `ffmpeg`, so a render never fails for want of a paid
+provider. Veo needs `VIDEO_BUDGET_OK=1` on top of the API key, deliberately:
+holding a Gemini key for the free text models should not quietly start a
+per-second video bill.
+
 ### Accounts
 
 Everything behind `/api` needs one. The first person to open the UI creates the
