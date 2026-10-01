@@ -371,6 +371,30 @@ Three robustness fixes found while verifying:
   warning rather than losing the film, and the supersampled frame is capped at
   8.5 MP so a 1080p project cannot exhaust memory.
 
+## M7 results (2026-10-01)
+
+273/273 tests pass. Ship polish:
+- **Continuous integration**, which there was none of. `ubuntu-latest` and
+  `windows-latest`, Python 3.11 and 3.12, with ffmpeg, the Noto fonts and
+  `libgl1` installed on the Linux runner. The suite is fully offline, so CI
+  needs no secrets and spends no quota, and `compileall` runs first so a
+  syntax error in a file no test imports still fails the build.
+  **The first run found a real bug**: on a machine without the optional voice
+  packages, choosing Kokoro raised `ModuleNotFoundError: No module named
+  'soundfile'` because the import ran before the check that explains what to
+  install. It could not show up on the dev laptop, which has them.
+- **A film library in the UI.** `/api/projects/` existed and nothing showed
+  it, so there was no way back to yesterday's film. Clicking one loads the
+  video, its subtitle tracks and its history, or opens the storyboard if it
+  was never rendered.
+- **A front page that describes the product**, not the course brief. The old
+  one opened with a Member 1-4 ownership table; the original team project is
+  now credited in an Origins section instead of being the headline.
+
+Worth knowing operationally: `data/state.db` runs in WAL mode, so copying that
+file alone does **not** copy recent writes — a backup taken with `cp` came back
+empty. Use SQLite's backup API (`sqlite3.Connection.backup`) or `VACUUM INTO`.
+
 ## Known issues / next milestones
 
 - The Pollinations key now has a small pollen budget, so the keyed endpoint
