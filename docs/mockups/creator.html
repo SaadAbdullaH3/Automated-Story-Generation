@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Hours of the Flood</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0D0C0B;            /* warm near-black, never #000 */
+    --surface:#171614;
+    --raised:#1E1C19;
+    --line:rgba(255,255,255,.08);
+    --fg:#F2EFE9;
+    --muted:#9A948B;
+    --faint:#6B655D;
+    --ember:#D98B3A;         /* the single accent */
+    --sans:"Outfit",-apple-system,"Segoe UI",Helvetica,sans-serif;
+    --serif:"Instrument Serif",Georgia,serif;
+    --mono:"JetBrains Mono",ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--fg); font-family:var(--sans);
+    font-size:14px; line-height:1.55; font-weight:300; -webkit-font-smoothing:antialiased;
+  }
+  /* one slow ember spot, fixed, behind everything */
+  body::before{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+    background:radial-gradient(70rem 36rem at 18% -8%, rgba(217,139,58,.07), transparent 65%);
+  }
+  .wrap{position:relative; z-index:1; max-width:1500px; margin:0 auto; padding:0 44px 80px;}
+
+  .bar{display:flex; align-items:center; gap:14px; padding:22px 0 0; margin-bottom:46px;}
+  .mark{font-family:var(--serif); font-size:19px; letter-spacing:-.01em;}
+  .bar .spacer{flex:1}
+  .who{font-family:var(--mono); font-size:11px; color:var(--faint);}
+
+  /* ---- the line you wrote, kept visible ---- */
+  .prompt-row{display:flex; align-items:flex-end; gap:28px; margin-bottom:10px;}
+  .prompt-row h1{
+    font-family:var(--serif); font-weight:400; font-size:clamp(30px,3.4vw,44px);
+    line-height:1.1; letter-spacing:-.02em; margin:0; max-width:24ch; text-wrap:balance;
+  }
+  .prompt-row .edit{
+    font:inherit; font-size:12px; color:var(--faint); background:none; border:0;
+    border-bottom:1px solid var(--line); padding:0 0 2px; cursor:pointer; margin-bottom:8px;
+  }
+  .prompt-row .edit:hover{color:var(--fg); border-color:var(--fg);}
+  .status{
+    display:flex; align-items:center; gap:10px; margin:0 0 34px;
+    font-family:var(--mono); font-size:11.5px; color:var(--muted); letter-spacing:.02em;
+  }
+  .status .pip{width:6px; height:6px; border-radius:50%; background:var(--ember);
+               animation:pip 1.6s ease-in-out infinite;}
+  @keyframes pip{0%,100%{opacity:1}50%{opacity:.25}}
+  .status .el{color:var(--faint);}
+
+  /* ---- the strip ---- */
+  .strip{
+    display:grid; grid-template-columns:1fr 1.34fr 1fr; gap:20px; align-items:start;
+    margin-bottom:38px;
+  }
+  .scene{
+    --d:0ms;
+    opacity:0; transform:translateY(12px);
+    animation:rise .6s cubic-bezier(.16,1,.3,1) forwards; animation-delay:var(--d);
+  }
+  @keyframes rise{to{opacity:1; transform:none}}
+  .frame{
+    position:relative; aspect-ratio:16/9; border-radius:10px; overflow:hidden;
+    background:var(--surface); border:1px solid var(--line);
+  }
+  .frame img{width:100%; height:100%; object-fit:cover; display:block;}
+  .frame .num{
+    position:absolute; top:12px; left:14px; font-family:var(--mono); font-size:11px;
+    letter-spacing:.1em; color:rgba(255,255,255,.82); text-shadow:0 1px 6px rgba(0,0,0,.7);
+  }
+  .frame .move{
+    position:absolute; bottom:12px; left:14px; font-family:var(--mono); font-size:10px;
+    letter-spacing:.09em; text-transform:uppercase; color:rgba(255,255,255,.72);
+    text-shadow:0 1px 6px rgba(0,0,0,.8);
+  }
+  .frame .shade{
+    position:absolute; inset:auto 0 0 0; height:42%; pointer-events:none;
+    background:linear-gradient(to top, rgba(0,0,0,.55), transparent);
+  }
+  .scene.active .frame{border-color:rgba(217,139,58,.5);}
+
+  /* a frame still being drawn: the writing is already there, the picture isn't */
+  .frame.pending{display:grid; place-items:center;}
+  .frame.pending::after{
+    content:""; position:absolute; inset:0;
+    background:linear-gradient(100deg,transparent 20%,rgba(255,255,255,.045) 50%,transparent 80%);
+    background-size:220% 100%; animation:sweep 2.1s linear infinite;
+  }
+  @keyframes sweep{to{background-position:-220% 0}}
+  .frame.pending .label{
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--faint); z-index:1;
+  }
+
+  .scene h3{
+    font-size:16px; font-weight:500; margin:14px 0 4px; letter-spacing:-.01em;
+  }
+  .scene .tone{font-family:var(--mono); font-size:10px; letter-spacing:.09em;
+               text-transform:uppercase; color:var(--faint);}
+  .scene blockquote{
+    margin:10px 0 0; padding-left:12px; border-left:1px solid var(--line);
+    color:var(--muted); font-size:13.5px; line-height:1.5; font-style:italic;
+  }
+  .scene blockquote cite{display:block; font-style:normal; font-size:11px;
+    font-family:var(--mono); color:var(--faint); margin-top:5px; letter-spacing:.04em;}
+
+  /* ---- actions ---- */
+  .actions{
+    display:flex; align-items:center; gap:14px;
+    border-top:1px solid var(--line); padding-top:22px;
+  }
+  .btn{
+    font:inherit; font-family:var(--sans); font-size:14px; font-weight:500;
+    color:var(--fg); background:transparent; border:1px solid var(--line);
+    padding:11px 20px; border-radius:7px; cursor:pointer;
+    transition:border-color .18s, background .18s, transform .1s;
+  }
+  .btn:hover{border-color:rgba(255,255,255,.25);}
+  .btn:active{transform:scale(.985);}
+  .btn.primary{background:var(--ember); border-color:var(--ember); color:#1A1206; font-weight:600;}
+  .btn.primary:hover{background:#E79B4D;}
+  .btn[disabled]{opacity:.4; cursor:default;}
+  .actions .spacer{flex:1}
+  .cost{font-family:var(--mono); font-size:11px; color:var(--faint); text-align:right;}
+  .cost b{color:var(--muted); font-weight:500;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="bar">
+    <span class="mark">Agentic Video Generator</span>
+    <span class="spacer"></span>
+    <span class="who">saad@example.com</span>
+  </div>
+
+  <div class="prompt-row">
+    <h1>A clockmaker in a flooded city repairs the hours people lose</h1>
+    <button class="edit">edit prompt</button>
+  </div>
+  <p class="status">
+    <span class="pip"></span>
+    <span>Drawing scene 3 — Restored Hours</span>
+    <span class="el">· 38s elapsed · scene 1 and 2 ready</span>
+  </p>
+
+  <div class="strip">
+
+    <div class="scene" style="--d:0ms">
+      <div class="frame">
+        <img src="f1.jpg" alt="A flooded street at dawn, mist rising off the water"/>
+        <div class="shade"></div>
+        <span class="num">01</span>
+        <span class="move">pull out</span>
+      </div>
+      <h3>Morning Flood</h3>
+      <div class="tone">melancholic</div>
+      <blockquote>When the city swallows the sun's first hour, Eli collects
+        the moments it took.<cite>Narrator · George</cite></blockquote>
+    </div>
+
+    <div class="scene active" style="--d:90ms">
+      <div class="frame">
+        <img src="f2.jpg" alt="A cramped workshop, water on the floor, clocks on every wall"/>
+        <div class="shade"></div>
+        <span class="num">02</span>
+        <span class="move">push in</span>
+      </div>
+      <h3>Repairing Time</h3>
+      <div class="tone">tense</div>
+      <blockquote>Hold it still, Mira. An hour this bent does not want to be
+        found.<cite>Eli the Clockmaker · Michael</cite></blockquote>
+    </div>
+
+    <div class="scene" style="--d:180ms">
+      <div class="frame pending">
+        <span class="label">drawing</span>
+        <span class="num">03</span>
+      </div>
+      <h3>Restored Hours</h3>
+      <div class="tone">joyful</div>
+      <blockquote>Look — the clock above the market is running again.
+        <cite>Mira · Nicole</cite></blockquote>
+    </div>
+
+  </div>
+
+  <div class="actions">
+    <button class="btn primary" disabled>Render this film</button>
+    <button class="btn">Reshoot a scene</button>
+    <button class="btn">Change the voices</button>
+    <span class="spacer"></span>
+    <span class="cost">storyboard uses <b>3 images</b> · the full render adds <b>7</b></span>
+  </div>
+
+</div>
+</body>
+</html>
