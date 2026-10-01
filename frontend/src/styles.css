@@ -279,6 +279,21 @@ button.secondary { color: var(--accent); }
 .sb-line span { flex: 0 0 82px; font-size: 11px; color: #8b93a7; }
 .sb-frame.saving { opacity: 0.55; }
 
+/* ---- film library (M7) ---- */
+.library { display: flex; flex-direction: column; gap: 8px; max-height: 320px;
+           overflow-y: auto; font-size: 12px; }
+.film {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 8px 10px; border: 1px solid var(--border, #2a2f3d);
+  border-radius: 6px; background: var(--panel-2, #1d2230);
+  cursor: pointer; text-align: left; width: 100%;
+}
+.film:hover { border-color: var(--accent, #5a9bf0); }
+.film.current { border-color: var(--accent, #5a9bf0); }
+.film-title { color: var(--text, #e6e9ef); font-weight: 600; flex: 1;
+              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.film-meta { color: var(--muted, #8b93a7); font-size: 11px; white-space: nowrap; }
+
 /* ---- sign-in gate (M5) ---- */
 .gate {
   position: fixed; inset: 0; z-index: 50;

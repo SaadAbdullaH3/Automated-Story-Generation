@@ -334,6 +334,7 @@ async function onPipelineComplete(projectId, payload) {
   $("metaPanel").textContent = JSON.stringify(meta, null, 2);
   setRerunButtons(true);
   loadHistory(projectId);
+  loadLibrary();
 }
 
 // ---- phase re-runs ---------------------------------------------------------
@@ -546,6 +547,62 @@ function escapeHtml(s) {
   }[c]));
 }
 
+// ---- the films this account has made ---------------------------------------
+
+async function loadLibrary() {
+  let films = [];
+  try {
+    films = await fetch("/api/projects/").then((r) => (r.ok ? r.json() : []));
+  } catch (e) {
+    return;
+  }
+  const box = $("library");
+  if (!films.length) {
+    box.textContent = "Nothing yet — write a prompt above.";
+    return;
+  }
+  box.innerHTML = films
+    .map(
+      (f) => `
+      <button class="film${f.project_id === state.projectId ? " current" : ""}"
+              data-pid="${escapeHtml(f.project_id)}"
+              ${f.video_url ? "" : "data-unrendered=\"1\""}>
+        <span class="film-title">${escapeHtml(f.title || "(untitled)")}</span>
+        <span class="film-meta">${f.video_url ? "film" : "draft"} · v${f.version}</span>
+      </button>`,
+    )
+    .join("");
+  box.querySelectorAll(".film").forEach((btn) => {
+    btn.addEventListener("click", () => openFilm(btn.dataset.pid));
+  });
+}
+
+async function openFilm(projectId) {
+  state.projectId = projectId;
+  resetPhases();
+  $("log").textContent = "";
+  appendLog(`opening ${projectId}`);
+  $("storyboardCard").style.display = "none";
+  $("downloadRow").style.display = "none";
+
+  // A rendered project fills the player; one still at the storyboard stage
+  // opens its storyboard so it can be finished.
+  const res = await fetch(`/api/pipeline/state/${projectId}`);
+  if (!res.ok) {
+    appendLog("that project is no longer available");
+    return;
+  }
+  const stateData = await res.json();
+  if (stateData.video?.final_video_path) {
+    await onPipelineComplete(projectId, {});
+  } else {
+    await loadStoryboard(projectId);
+    setRerunButtons(true);
+    loadHistory(projectId);
+  }
+  loadLibrary();
+}
+
 // ---- sign-in gate ----------------------------------------------------------
 
 const gate = {
@@ -648,6 +705,7 @@ function startApp() {
   loadLanguages();
   loadVoices();
   loadProviderBadge();
+  loadLibrary();
 }
 
 // ---- wire up ---------------------------------------------------------------

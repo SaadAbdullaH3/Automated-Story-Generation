@@ -1,23 +1,49 @@
-# Agentic AI — AI-Powered Animated Video Generation System
+# Agentic Video Generator
 
-> *From a single natural-language prompt to a polished short animated film, end-to-end, with LLM agents.*
->
-> National University of Computer & Emerging Sciences — **Agentic AI Semester Project, Spring 2026**
+**One sentence in. A finished short film out — script, voices, pictures,
+music, subtitles and cuts.**
 
-This repository implements the full five-phase agentic pipeline described in
-the project brief:
+[![tests](https://github.com/SaadAbdullaH3/Automated-Story-Generation/actions/workflows/tests.yml/badge.svg)](https://github.com/SaadAbdullaH3/Automated-Story-Generation/actions/workflows/tests.yml)
+![python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
+![tests](https://img.shields.io/badge/tests-274%20passing-brightgreen)
+![cost](https://img.shields.io/badge/running%20cost-%240-brightgreen)
 
-| Phase | Owner | Module | Output |
-|-------|-------|--------|--------|
-| 1. Story, Script & Character | Member 1 | `agents/story_agent/` | `story.json`, `characters.json`, `script.json`, hand-offs |
-| 2. Audio Generation | Member 2 | `agents/audio_agent/` | per-line TTS files + `timing_manifest.json` + master track |
-| 3. Video Composition | Member 3 | `agents/video_agent/` | per-scene images, animated clips, `final_output.mp4` |
-| 4. Web Interface | Member 4 | `backend/` + `frontend/` | FastAPI + WebSocket + single-page UI |
-| 5. Intelligent Edit & Undo | Member 4 (lead) | `agents/edit_agent/` | NL edit → versioned re-runs + revert |
+```bash
+python main.py "A clockmaker in a flooded city repairs the hours people lose"
+```
 
-The system is designed so **every phase is independently testable** and the
-**entire pipeline runs offline with zero API keys** (template-based fallbacks
-for the LLM, silent/free TTS, free image generation, ffmpeg-only video).
+Two and a half minutes later there is a 24-second film: a three-scene script
+with named characters, each line spoken in its own voice, images in a look the
+story chose for itself, a camera move per shot, music ducked under the
+dialogue, and burned-in subtitles in any of 14 languages.
+
+Then you can talk to it:
+
+```
+edit> make scene 2 darker and slow Mira's voice down
+edit> actually, revert that
+```
+
+Every change is versioned, and undo restores the audio and the video, not just
+the text.
+
+### What makes it more than a wrapper
+
+- **It runs at zero cost.** Every model has a free tier or an offline
+  fallback, and the chain degrades visibly rather than failing: a dead image
+  provider drops to the next one and says so in the log.
+- **Nothing is hard-coded.** Which model writes the script, speaks the lines,
+  draws the frames or animates them is one YAML file, not an `if` in an agent.
+- **One timeline.** Audio places lines on it, video cuts on its boundaries,
+  subtitles read from it. The finished film is frame-exact against it — not
+  approximately, exactly.
+- **It is a service, not a script.** Runs are rows in a database executed by
+  workers, so they survive a restart, can be watched from another process, and
+  can be cancelled. Accounts are real: projects are private to their owner,
+  down to the video file.
+- **Claims here are measured.** Speaking rate calibrated against real voices;
+  camera smoothness measured by phase correlation; audio ducking measured per
+  frequency band. Where something is unverified, the docs say so.
 
 ---
 
@@ -32,7 +58,7 @@ for the LLM, silent/free TTS, free image generation, ffmpeg-only video).
 7. [Testing](#testing)
 8. [Configuration](#configuration)
 9. [Project layout](#project-layout)
-10. [Division of work](#division-of-work)
+10. [Origins](#origins)
 
 ---
 
@@ -697,14 +723,25 @@ Agentic Project/
 
 ---
 
-## Division of work
+## Origins
 
-| Member | Primary phase | Files owned |
-|--------|---------------|-------------|
-| **Member 1** | Phase 1 — Story & Script | `agents/story_agent/`, `mcp/tools/llm_tools/`, `shared/schemas/story.py` |
-| **Member 2** | Phase 2 — Audio | `agents/audio_agent/`, `mcp/tools/audio_tools/`, `shared/schemas/audio.py` |
-| **Member 3** | Phase 3 — Video | `agents/video_agent/`, `mcp/tools/vision_tools/`, `mcp/tools/video_tools/`, `shared/schemas/video.py` |
-| **Member 4** | Phase 4 — Web App **+** Phase 5 — Edit/Undo | `backend/`, `frontend/`, `agents/edit_agent/`, `state_manager/`, `shared/schemas/edit.py` |
+This started as a four-person Agentic AI semester project at the National
+University of Computer & Emerging Sciences (Spring 2026), where the five
+phases were split across the team:
+
+| Phase | Module |
+|-------|--------|
+| 1. Story, Script & Character | `agents/story_agent/`, `mcp/tools/llm_tools/` |
+| 2. Audio Generation | `agents/audio_agent/`, `mcp/tools/audio_tools/` |
+| 3. Video Composition | `agents/video_agent/`, `mcp/tools/vision_tools/`, `mcp/tools/video_tools/` |
+| 4. Web Interface | `backend/`, `frontend/` |
+| 5. Intelligent Edit & Undo | `agents/edit_agent/`, `state_manager/` |
+
+Everything after that original submission — the single timeline that fixed the
+audio/video drift, the provider configuration layer, the storyboard review
+step, the durable job queue, accounts, the containers, and the camera work —
+is continued solo development, documented milestone by milestone in
+[CLAUDE.md](CLAUDE.md).
 
 All members jointly own:
 

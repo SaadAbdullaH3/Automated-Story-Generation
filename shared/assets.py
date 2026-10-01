@@ -1,9 +1,13 @@
 """Where a finished asset lives, and the one place that turns it into a URL.
 
-Local disk is the default and needs no configuration: the API serves
-`data/outputs` at `/assets`. That only works while the worker writes to the
-same filesystem the API reads, so it stops working the moment they are on
-different hosts — which the job queue now makes possible.
+**Local disk is the default, deliberately.** The API serves `data/outputs` at
+`/assets`, which needs no configuration, no network round trip and no expiring
+links. It only stops working when the worker and the API are on different
+hosts — which the job queue makes possible but which a laptop is not.
+
+Nothing but `STORAGE_URL` changes that. Bucket credentials sitting in the
+environment do not: otherwise adding a key to try something out would quietly
+reroute every local render through object storage.
 
 Set `STORAGE_URL=s3://bucket` (Cloudflare R2's free tier is S3-compatible) and
 finished assets are uploaded instead, with `asset_url` returning the public URL.
