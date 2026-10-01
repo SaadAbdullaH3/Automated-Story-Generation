@@ -371,8 +371,8 @@ file to Postgres; `STORAGE_URL=s3://bucket` publishes finished films to any
 S3-compatible bucket (Cloudflare R2 is free to 10 GB) so the API and the
 workers don't have to share a disk.
 
-The Postgres path is tested rather than assumed — the whole suite runs against
-a real server:
+Both paths are tested rather than assumed. The whole suite runs against a real
+Postgres server, and the object store against a real S3 one:
 
 ```bash
 docker run -d --name storygen-pg -e POSTGRES_USER=storygen \
@@ -381,6 +381,17 @@ pip install -r requirements-postgres.txt
 TEST_DATABASE_URL=postgresql+psycopg://storygen:storygen@localhost:55432/storygen \
   python -m pytest -q
 ```
+
+```bash
+pip install -r requirements-s3.txt "moto[server]"
+python -m moto.server -p 5111 &
+TEST_S3_ENDPOINT=http://127.0.0.1:5111 S3_REGION=us-east-1 \
+  AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
+  python -m pytest tests/unit/test_m4_deploy.py -k real_s3
+```
+
+Point `TEST_S3_ENDPOINT` at `https://<account>.r2.cloudflarestorage.com` with
+real R2 credentials and the same test verifies Cloudflare R2.
 
 ### Choosing a voice, and hearing it first
 

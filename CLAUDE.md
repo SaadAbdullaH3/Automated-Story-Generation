@@ -42,6 +42,7 @@ The default TTS engine shells out to the `edge-tts` CLI, which lives in
 ```bash
 python -m pytest -q                        # full suite (~3 min, offline: mock LLM + placeholder images)
 TEST_DATABASE_URL=postgresql+psycopg://... python -m pytest -q   # same suite, real Postgres
+TEST_S3_ENDPOINT=http://127.0.0.1:5111 python -m pytest -k real_s3   # against a real S3/R2 server
 python -m pytest tests/unit/test_phase5_edit.py -q
 python main.py "prompt" --duration 30 --scenes 4   # CLI end-to-end run
 python main.py plan "prompt" --scenes 4            # storyboard only (cheap)
@@ -260,6 +261,27 @@ Verified against a real Postgres 16 (`docker run postgres:16-alpine`):
   were 98 s and 324 s: two ffmpeg pipelines on one laptop fight for cores, so
   extra workers pay off across machines, not on this one.
 
+## Cloudflare account check (2026-10-01)
+
+- `CLOUDFLARE_API_TOKEN` is scoped to **Workers AI only**: `/accounts/{id}` and
+  `/accounts/{id}/r2/buckets` both return 403, while the Workers AI endpoints
+  answer normally. R2 therefore cannot be reached with the key already in `.env`.
+- Workers AI itself is fine, but the **10,000 neuron/day free allocation was
+  exhausted** by the M4 verification renders (HTTP 429, "you have used up your
+  daily free allocation"). It resets daily; until then images fall through to
+  Pollinations' keyless endpoint, which is what the chain is for.
+- Using R2 needs three things only the account owner can do: enable R2 (which
+  asks for a payment method even for the free 10 GB), create a bucket, and mint
+  an **R2 API token** — that is a separate S3 access key id + secret, not the
+  Workers AI bearer token. Then:
+  `STORAGE_URL=s3://<bucket>`, `S3_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com`,
+  `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` from that token, and
+  `python -m pytest -k real_s3` with `TEST_S3_ENDPOINT` set proves it in one run.
+- Testing against a real S3 server found one bug: boto3 defaults to
+  virtual-host addressing (`bucket.host`), which needs DNS per bucket and fails
+  on R2/MinIO-style endpoints. `shared/assets.py` now uses path addressing
+  whenever `S3_ENDPOINT_URL` is set.
+
 ## Known issues / next milestones
 
 - The Pollinations key has a 0 pollen budget, so the keyed endpoint 402s and the keyless
@@ -270,8 +292,11 @@ Verified against a real Postgres 16 (`docker run postgres:16-alpine`):
 - Storyboard previews are drawn at 512x288 and thrown away at render time; reusing them as
   the wide shot would save one image per scene.
 - Snapshots copy every file per version — storage grows quickly (content-addressed storage would fix it).
-- The S3/R2 asset backend is wired and unit-tested against a fake client, but
-  has not run against a real bucket (none exists at $0).
+- The S3/R2 asset backend has been verified against a real S3 server
+  (`python -m moto.server`), not just a fake client: a finished film's 32
+  assets (19.3 MB) uploaded through the worker's publish step and the film came
+  back byte-identical over a presigned URL. It has **not** run against
+  Cloudflare R2 itself — see below.
 - Two workers on one laptop contend for CPU; concurrency helps across hosts.
 - No authentication: every project is visible to anyone who can reach the API.
 - Scene-scoped voice edits apply to that scene only until a later global audio edit re-renders it.

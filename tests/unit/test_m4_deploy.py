@@ -1,6 +1,7 @@
 """M4 — running somewhere other than this laptop: asset URLs, fonts, containers."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -224,3 +225,53 @@ def test_a_postgres_url_is_rewritten_for_the_installed_driver(monkeypatch):
     assert db.default_url() == "postgresql+psycopg://u:p@host:5432/storygen"
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host/storygen")
     assert db.default_url() == "postgresql+psycopg://u:p@host/storygen"
+
+
+# ---- a real S3 endpoint -------------------------------------------------------
+# Opt-in, the same way TEST_DATABASE_URL works. Against Cloudflare R2:
+#   TEST_S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com \
+#   TEST_S3_BUCKET=storygen AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... \
+#   python -m pytest tests/unit/test_m4_deploy.py -k real_s3
+LIVE_S3 = os.getenv("TEST_S3_ENDPOINT", "").strip()
+
+
+@pytest.mark.skipif(not LIVE_S3,
+                    reason="set TEST_S3_ENDPOINT to test against a real S3/R2 server")
+def test_a_film_published_to_real_s3_comes_back_byte_for_byte(isolated_dirs, monkeypatch):
+    """Everything else about the S3 backend is tested against a fake client.
+    This is the one that talks the actual protocol: signing, PUT, presigned GET."""
+    import requests
+
+    bucket = os.getenv("TEST_S3_BUCKET", "storygen-test")
+    monkeypatch.setenv("STORAGE_URL", f"s3://{bucket}")
+    monkeypatch.setenv("S3_ENDPOINT_URL", LIVE_S3)
+    monkeypatch.delenv("S3_PUBLIC_BASE", raising=False)
+    assets.reset()
+
+    store = assets.store()
+    region = os.getenv("S3_REGION", "auto")
+    try:
+        store.client().head_bucket(Bucket=bucket)
+    except Exception:  # noqa: BLE001 — first run against a fresh server
+        make = {"Bucket": bucket}
+        if region != "us-east-1":
+            # Every region but the default one must be named explicitly.
+            make["CreateBucketConfiguration"] = {"LocationConstraint": region}
+        store.client().create_bucket(**make)
+
+    film = constants.OUTPUTS_DIR / "pid_live" / "final_output.mp4"
+    film.parent.mkdir(parents=True, exist_ok=True)
+    payload = b"not really an mp4, but the bytes must survive the round trip" * 400
+    film.write_bytes(payload)
+
+    published = assets.publish([film])
+    url = published[str(film)]
+    assert "pid_live/final_output.mp4" in url
+
+    fetched = requests.get(url, timeout=30)
+    assert fetched.status_code == 200
+    assert fetched.content == payload
+
+    # And the key is laid out the way the rest of the app expects.
+    listing = store.client().list_objects_v2(Bucket=bucket, Prefix="pid_live/")
+    assert [o["Key"] for o in listing["Contents"]] == ["pid_live/final_output.mp4"]

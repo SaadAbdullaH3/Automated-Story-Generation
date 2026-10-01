@@ -67,10 +67,18 @@ class S3Assets:
     def client(self):
         if self._client is None:
             import boto3  # imported here so the default install needs no AWS SDK
+            from botocore.config import Config
+            endpoint = os.getenv("S3_ENDPOINT_URL") or None
+            # Virtual-host addressing (bucket.host) is boto3's default and needs
+            # DNS per bucket; R2, MinIO and the like are addressed by path. Only
+            # real AWS is left on "auto".
+            style = os.getenv("S3_ADDRESSING_STYLE") or ("path" if endpoint else "auto")
             self._client = boto3.client(
                 "s3",
-                endpoint_url=os.getenv("S3_ENDPOINT_URL") or None,
+                endpoint_url=endpoint,
                 region_name=os.getenv("S3_REGION", "auto"),
+                config=Config(s3={"addressing_style": style},
+                              retries={"max_attempts": 3, "mode": "standard"}),
             )
         return self._client
 
