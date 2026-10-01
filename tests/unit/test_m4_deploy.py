@@ -173,9 +173,10 @@ def test_the_build_context_excludes_secrets_and_generated_films():
 
 def test_ready_reports_where_state_and_assets_live(isolated_dirs):
     from backend.app import app
+    from shared import db
     body = TestClient(app).get("/ready").json()
-    assert body == {"status": "ok", "database": "sqlite", "storage": "local",
-                    "inline_worker": False}
+    assert body == {"status": "ok", "database": db.get_engine().dialect.name,
+                    "storage": "local", "inline_worker": False}
 
 
 # ---- the Postgres path --------------------------------------------------------

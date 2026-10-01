@@ -271,4 +271,5 @@ def test_status_reports_the_job_even_after_a_restart(api):
 
 def test_ready_reports_the_database(api):
     body = api.get("/ready").json()
-    assert body["status"] == "ok" and body["database"] == "sqlite"
+    assert body["status"] == "ok"
+    assert body["database"] == db.get_engine().dialect.name

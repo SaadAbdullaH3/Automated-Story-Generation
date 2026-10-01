@@ -371,6 +371,17 @@ file to Postgres; `STORAGE_URL=s3://bucket` publishes finished films to any
 S3-compatible bucket (Cloudflare R2 is free to 10 GB) so the API and the
 workers don't have to share a disk.
 
+The Postgres path is tested rather than assumed — the whole suite runs against
+a real server:
+
+```bash
+docker run -d --name storygen-pg -e POSTGRES_USER=storygen \
+  -e POSTGRES_PASSWORD=storygen -e POSTGRES_DB=storygen -p 55432:5432 postgres:16-alpine
+pip install -r requirements-postgres.txt
+TEST_DATABASE_URL=postgresql+psycopg://storygen:storygen@localhost:55432/storygen \
+  python -m pytest -q
+```
+
 ### Choosing a voice, and hearing it first
 
 The voice engine comes from `config/providers.yaml`, but the UI can override it

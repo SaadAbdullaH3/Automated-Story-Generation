@@ -40,7 +40,8 @@ The default TTS engine shells out to the `edge-tts` CLI, which lives in
 ## Commands
 
 ```bash
-python -m pytest -q                        # full suite (~3.5 min, offline: mock LLM + placeholder images)
+python -m pytest -q                        # full suite (~3 min, offline: mock LLM + placeholder images)
+TEST_DATABASE_URL=postgresql+psycopg://... python -m pytest -q   # same suite, real Postgres
 python -m pytest tests/unit/test_phase5_edit.py -q
 python main.py "prompt" --duration 30 --scenes 4   # CLI end-to-end run
 python main.py plan "prompt" --scenes 4            # storyboard only (cheap)
@@ -218,8 +219,10 @@ Saad watched the first live render and reported three things:
   that stops heartbeating for two minutes has its job requeued, bounded by
   `max_attempts`. Cancellation is cooperative and lands between steps.
 - **One database, two backends.** `shared/db.py` holds the version log and the
-  queue through SQLalchemy Core: SQLite in WAL mode locally (so the API and the
-  inline worker can both write), Postgres by setting `DATABASE_URL`.
+  queue through SQLAlchemy Core: SQLite in WAL mode locally (so the API and the
+  inline worker can both write), Postgres by setting `DATABASE_URL`. Setting
+  `TEST_DATABASE_URL` runs the whole suite against a real server instead of
+  throwaway SQLite files, so the Postgres path is tested, not assumed.
 - **Scales apart.** `main.py serve` still runs a worker thread, so a laptop
   needs one command; `WORKER_INLINE=0` plus `main.py worker` splits them, and
   `docker compose up --scale worker=3` runs three renders at once.
@@ -248,6 +251,15 @@ Measured live, API and worker as separate processes:
   afterwards and ran to completion when the API came back — the exact case the
   old in-memory registry lost.
 
+Verified against a real Postgres 16 (`docker run postgres:16-alpine`):
+- The **whole suite, 195/195**, passes with `TEST_DATABASE_URL` pointed at it.
+- 40 jobs, 4 separate OS processes claiming at once: 11/11/9/9, **no job
+  claimed twice, none left behind**. This is what `SKIP LOCKED` is for.
+- The real stack — API plus two worker processes on one Postgres — rendered two
+  films concurrently, one on each worker. Wall clock 327 s for both, but they
+  were 98 s and 324 s: two ffmpeg pipelines on one laptop fight for cores, so
+  extra workers pay off across machines, not on this one.
+
 ## Known issues / next milestones
 
 - The Pollinations key has a 0 pollen budget, so the keyed endpoint 402s and the keyless
@@ -259,7 +271,7 @@ Measured live, API and worker as separate processes:
   the wide shot would save one image per scene.
 - Snapshots copy every file per version — storage grows quickly (content-addressed storage would fix it).
 - The S3/R2 asset backend is wired and unit-tested against a fake client, but
-  has not run against a real bucket (none exists at $0). The Postgres path is
-  likewise exercised only through SQLAlchemy's shared SQL, not a live server.
+  has not run against a real bucket (none exists at $0).
+- Two workers on one laptop contend for CPU; concurrency helps across hosts.
 - No authentication: every project is visible to anyone who can reach the API.
 - Scene-scoped voice edits apply to that scene only until a later global audio edit re-renders it.
