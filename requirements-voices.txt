@@ -1,0 +1,5 @@
+# Open-source offline voices (optional). No PyTorch, no API key, no GPU needed.
+#   pip install -r requirements-voices.txt
+#   python scripts/get_kokoro.py        # ~340 MB of model files
+kokoro-onnx>=0.4           # Kokoro TTS (Apache-2.0) on onnxruntime
+soundfile>=0.12            # writing the generated audio

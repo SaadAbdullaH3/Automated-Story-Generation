@@ -15,6 +15,7 @@ class RunContext:
     with_bgm: bool = True
     with_subtitles: bool = True
     subtitle_language: str = "English"
+    burn_subtitles: bool = True
     width: int = 1280
     height: int = 720
     fps: int = 24

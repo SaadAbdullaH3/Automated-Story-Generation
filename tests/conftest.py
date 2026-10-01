@@ -86,7 +86,7 @@ def small_project(isolated_dirs):
     from state_manager.storage import SqliteStorage
 
     def build(project_id="t_small", duration_s=24, scenes=3, subtitle_language="English",
-              with_subtitles=True, with_bgm=False):
+              with_subtitles=True, with_bgm=False, burn_subtitles=True):
         sm = StateManager(SqliteStorage(isolated_dirs / "state.db"))
         state = PipelineState(project_id=project_id, user_prompt="A robot learns to paint")
         state.script = template_script(project_id, state.user_prompt,
@@ -96,7 +96,7 @@ def small_project(isolated_dirs):
         audio.run(state, with_bgm=with_bgm)
         VideoAgent().run(state, with_subtitles=with_subtitles,
                          subtitle_language=subtitle_language,
-                         width=320, height=180, fps=12,
+                         width=320, height=180, fps=12, burn_subtitles=burn_subtitles,
                          use_text_to_video=False, use_lip_sync=False, cinematic_post=False)
         sm.snapshot(state, asset_paths=referenced_files(state), description="initial")
         return state, sm

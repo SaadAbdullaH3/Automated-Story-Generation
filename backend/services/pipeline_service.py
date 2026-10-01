@@ -47,11 +47,12 @@ def plan_async(prompt: str, project_id: str, target_duration_s: int = 45,
 
 
 def render_async(project_id: str, with_bgm: bool = True, with_subtitles: bool = True,
-                 subtitle_language: str = "English") -> None:
+                 subtitle_language: str = "English", burn_subtitles: bool = True) -> None:
     try:
         _orchestrator.render(
             project_id, with_bgm=with_bgm, with_subtitles=with_subtitles,
-            subtitle_language=subtitle_language, on_event=_pusher(project_id),
+            subtitle_language=subtitle_language, burn_subtitles=burn_subtitles,
+            on_event=_pusher(project_id),
         )
     except Exception as e:  # noqa: BLE001
         _report_failure(project_id, e)

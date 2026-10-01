@@ -6,7 +6,8 @@ from typing import Dict, Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
-from shared.languages import supported_names
+from shared.languages import iso639_1, supported_names
+from shared.utils.files import project_dir
 from shared.utils.ids import new_project_id
 from shared.utils.logging import get_logger
 from state_manager.state_manager import StateManager
@@ -96,6 +97,7 @@ class RenderRequest(BaseModel):
     with_bgm: bool = True
     with_subtitles: bool = True
     subtitle_language: str = "English"
+    burn_subtitles: bool = True
 
 
 @router.post("/plan", response_model=RunResponse)
@@ -157,9 +159,26 @@ def start_render(project_id: str, req: RenderRequest, background: BackgroundTask
         with_bgm=req.with_bgm,
         with_subtitles=req.with_subtitles,
         subtitle_language=req.subtitle_language,
+        burn_subtitles=req.burn_subtitles,
     )
     return RunResponse(project_id=project_id, status="rendering",
                        websocket=f"/ws/progress/{project_id}")
+
+
+@router.get("/subtitles/{project_id}")
+def subtitle_tracks(project_id: str):
+    """WebVTT tracks for the browser player (MP4 soft subs are invisible there)."""
+    state = sm.latest(project_id)
+    if not state or not state.video:
+        raise HTTPException(404, f"no video for {project_id}")
+    tracks = []
+    for lang in state.video.subtitle_languages or []:
+        vtt = project_dir(project_id) / "subtitles" / f"{lang.lower()}.vtt"
+        if vtt.exists():
+            tracks.append({"language": lang, "code": iso639_1(lang),
+                           "url": f"/assets/{project_id}/subtitles/{vtt.name}",
+                           "burned_in": lang == state.video.burned_subtitle_language})
+    return tracks
 
 
 @router.get("/languages")

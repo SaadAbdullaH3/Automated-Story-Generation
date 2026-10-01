@@ -74,6 +74,11 @@ class StoryOutput(BaseModel):
     logline: str = Field(..., description="one-line pitch")
     synopsis: str = Field(..., description="paragraph summary")
     genre: str = Field(default="drama")
+    visual_style: str = Field(
+        default="",
+        description="how the film should look (medium, palette, lighting, lens); "
+                    "drives every image prompt, see agents/story_agent/visual_style.py",
+    )
     themes: List[str] = Field(default_factory=list)
     arc: str = Field(
         default="three-act",

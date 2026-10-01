@@ -99,6 +99,9 @@ roles:
 
   # ---- Character voices ---------------------------------------------------
   tts:
+    - provider: kokoro            # open-source, offline, Apache-2.0; no key, no GPU.
+      requires: [KOKORO_MODEL]    # pip install -r requirements-voices.txt
+      concurrency: 2              # then: python scripts/get_kokoro.py
     - provider: elevenlabs
       requires: [ELEVENLABS_API_KEY]
       concurrency: 2

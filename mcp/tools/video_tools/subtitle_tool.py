@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 from mcp.base_tool import BaseTool, ToolResult
-from shared.languages import iso639_2
+from shared.languages import WIDE_SCRIPT_LANGUAGES, canonical, iso639_2
 
 
 def _ms_to_srt_ts(ms: int) -> str:
@@ -21,7 +21,7 @@ class SubtitleTool(BaseTool):
     category = "video"
 
     def run(self, in_path: str, out_path: str, lines: List[Dict[str, Any]],
-            font_size: int = 20, **_) -> ToolResult:
+            font_size: int = 22, language: str = "English", **_) -> ToolResult:
         in_p = Path(in_path)
         out_p = Path(out_path)
         out_p.parent.mkdir(parents=True, exist_ok=True)
@@ -33,8 +33,11 @@ class SubtitleTool(BaseTool):
         # Alignment=2 = bottom-center (ASS standard).
         # MarginV=40 keeps lines off the very edge.
         # WrapStyle=2 = no automatic line breaks unless we add \N (forces single line then wraps to 2).
+        # Latin-only fonts drop Urdu/Hindi/CJK glyphs silently, so pick a font
+        # with the right coverage. libass handles right-to-left shaping itself.
+        font = "Segoe UI" if canonical(language) in WIDE_SCRIPT_LANGUAGES else "Arial"
         vf = (f"subtitles=filename='{srt_arg}':"
-              f"force_style='FontSize={font_size},"
+              f"force_style='FontName={font},FontSize={font_size},"
               f"PrimaryColour=&Hffffff&,OutlineColour=&H000000&,BackColour=&H80000000&,"
               f"BorderStyle=1,Outline=2,Shadow=1,"
               f"Alignment=2,MarginV=40,MarginL=80,MarginR=80,"
@@ -47,7 +50,8 @@ class SubtitleTool(BaseTool):
             return ToolResult(success=False, error=proc.stderr[-2000:],
                               metadata={"cmd": " ".join(cmd)})
         return ToolResult(success=True, data=str(out_p),
-                          metadata={"srt": str(srt_p), "line_count": len(lines)})
+                          metadata={"srt": str(srt_p), "line_count": len(lines),
+                                    "language": language, "font": font})
 
     @staticmethod
     def _build_srt(lines: List[Dict[str, Any]]) -> str:
@@ -60,6 +64,16 @@ class SubtitleTool(BaseTool):
                 f"{ln['text'].strip()}\n"
             )
         return "\n".join(chunks)
+
+
+def to_webvtt(lines: List[Dict[str, Any]]) -> str:
+    """WebVTT for the browser player (<track src=...>)."""
+    out = ["WEBVTT", ""]
+    for line in lines:
+        start = _ms_to_srt_ts(int(line["start_ms"])).replace(",", ".")
+        end = _ms_to_srt_ts(int(line["end_ms"])).replace(",", ".")
+        out += [f"{start} --> {end}", line["text"].strip(), ""]
+    return "\n".join(out)
 
 
 class MultiSubtitleTool(BaseTool):

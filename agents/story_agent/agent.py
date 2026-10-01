@@ -42,6 +42,8 @@ Generate a complete script JSON object with this exact structure:
     "logline": "one sentence pitch",
     "synopsis": "one paragraph summary",
     "genre": "...",
+    "visual_style": "how the whole film should look: medium, palette, lighting, lens — "
+                    "e.g. 'gritty cinematic sci-fi, cold teal palette, volumetric light, 35mm'",
     "themes": ["...", "..."],
     "arc": "three-act",
     "target_duration_s": {duration_s}
@@ -94,6 +96,9 @@ Rules:
 - Keep ALL spoken dialogue together to about {word_budget} words (people speak ~2.6 words
   per second, and each scene also needs ~2 seconds without speech). This is what makes
   the film land near {duration_s} seconds, so respect it.
+- `visual_style` must suit the story you are telling (a horror short and a children's
+  fable should not look the same). Every image in the film is generated with it, so make
+  it concrete about medium, palette and lighting — and do not mention characters in it.
 - Make the dialogue feel natural and specific to the genre.
 - The protagonist should appear in every scene; supporting characters can vary.
 """

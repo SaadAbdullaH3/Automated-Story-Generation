@@ -54,6 +54,7 @@ class PipelineOrchestrator:
         with_bgm: bool = True,
         with_subtitles: bool = True,
         subtitle_language: str = "English",
+        burn_subtitles: bool = True,
         project_id: Optional[str] = None,
         use_text_to_video: Optional[bool] = None,
         use_lip_sync: Optional[bool] = None,
@@ -70,6 +71,7 @@ class PipelineOrchestrator:
             with_bgm=with_bgm,
             with_subtitles=with_subtitles,
             subtitle_language=subtitle_language,
+            burn_subtitles=burn_subtitles,
             use_text_to_video=use_text_to_video,
             use_lip_sync=use_lip_sync,
             width=width, height=height, fps=fps,
@@ -203,6 +205,7 @@ class PipelineOrchestrator:
         with_bgm: bool = True,
         with_subtitles: bool = True,
         subtitle_language: str = "English",
+        burn_subtitles: bool = True,
         use_text_to_video: Optional[bool] = None,
         use_lip_sync: Optional[bool] = None,
     ) -> PipelineState:
@@ -212,7 +215,7 @@ class PipelineOrchestrator:
             raise ValueError(f"no storyboard to render for {project_id}")
         emit = on_event or (lambda _e: None)
         ctx = RunContext(state=state, with_bgm=with_bgm, with_subtitles=with_subtitles,
-                         subtitle_language=subtitle_language,
+                         subtitle_language=subtitle_language, burn_subtitles=burn_subtitles,
                          use_text_to_video=use_text_to_video, use_lip_sync=use_lip_sync)
         try:
             self._render_graph().run(
@@ -266,6 +269,7 @@ class PipelineOrchestrator:
         video_kwargs = dict(
             with_subtitles=v.has_subtitles if v else True,
             subtitle_language=v.subtitle_language if v else "English",
+            burn_subtitles=v.burn_subtitles if v else True,
             width=v.width if v else 1280, height=v.height if v else 720,
             fps=v.fps if v else 24,
             use_text_to_video=v.used_text_to_video if v else None,
@@ -333,6 +337,7 @@ class PipelineOrchestrator:
                   width=c.width, height=c.height, fps=c.fps,
                   use_text_to_video=c.use_text_to_video,
                   use_lip_sync=c.use_lip_sync,
+                  burn_subtitles=c.burn_subtitles,
               ),
               next_=[])
         return g

@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field
 class VoiceConfig(BaseModel):
     """Per-character TTS configuration."""
     character_id: str
-    engine: Literal["gtts", "pyttsx3", "elevenlabs", "edge", "silent", "mock"] = "gtts"
+    engine: Literal["gtts", "pyttsx3", "elevenlabs", "edge", "kokoro",
+                    "silent", "mock"] = "gtts"
     voice_id: Optional[str] = None
     language: str = "en"
     tld: str = Field(default="com", description="gTTS regional accent: com/co.uk/com.au/...")

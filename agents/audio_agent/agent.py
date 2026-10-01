@@ -37,6 +37,21 @@ _SILENT = ProviderSpec(role="tts", provider="silent")
 # Music sits louder than it used to because it ducks under dialogue.
 BGM_VOLUME = 0.32
 
+# Kokoro voices (open-source engine): af_/am_ are US, bf_/bm_ British.
+KOKORO_VOICES = {
+    "narrator": "bm_george",
+    "child": "af_nicole",
+    "elderly": "bm_lewis",
+    "female": "af_heart",
+    "male": "am_michael",
+    "neutral": "af_bella",
+}
+KOKORO_POOL = {
+    "female": ["af_heart", "af_bella", "bf_emma", "af_nicole"],
+    "male": ["am_michael", "am_adam", "bm_george", "bm_lewis"],
+    "neutral": ["af_bella", "bm_george", "af_heart", "am_adam"],
+}
+
 # Alternate edge-tts voices per gender, used by "change voice" edits.
 VOICE_POOL = {
     "female": ["en-US-AriaNeural", "en-US-JennyNeural", "en-GB-SoniaNeural",
@@ -200,7 +215,7 @@ class AudioAgent:
                 character_id=c.id,
                 engine=default_engine,
                 language="en",
-                voice_id=self._edge_voice_for(c),
+                voice_id=self.voice_for(c, default_engine),
                 tld=self._tld_for(c),
                 rate=self._rate_for(c),
                 tone=c.voice_style,
@@ -227,7 +242,8 @@ class AudioAgent:
         if voice:
             if voice == "alternate":
                 gender = character.voice_gender if character else "neutral"
-                pool = VOICE_POOL.get(gender, VOICE_POOL["neutral"])
+                pools = KOKORO_POOL if cfg.engine == "kokoro" else VOICE_POOL
+                pool = pools.get(gender, pools["neutral"])
                 current = cfg.voice_id or ""
                 idx = pool.index(current) if current in pool else -1
                 cfg.voice_id = pool[(idx + 1) % len(pool)]
@@ -244,6 +260,17 @@ class AudioAgent:
         if c.role == "narrator":
             return "com"
         return "com.au"
+
+    @classmethod
+    def voice_for(cls, c: Character, engine: str) -> str:
+        """Pick a voice that suits the character, in the engine's own naming."""
+        if engine == "kokoro":
+            if c.role == "narrator":
+                return KOKORO_VOICES["narrator"]
+            if c.voice_age in ("child", "elderly"):
+                return KOKORO_VOICES[c.voice_age]
+            return KOKORO_VOICES.get(c.voice_gender, KOKORO_VOICES["neutral"])
+        return cls._edge_voice_for(c)
 
     @staticmethod
     def _edge_voice_for(c: Character) -> str:

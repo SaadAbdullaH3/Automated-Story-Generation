@@ -51,6 +51,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         with_bgm=not args.no_bgm,
         with_subtitles=not args.no_subs,
         subtitle_language=args.subtitle_lang,
+        burn_subtitles=not args.no_burn_subs,
         on_event=_print_event,
         use_text_to_video=use_t2v,
         use_lip_sync=use_lip,
@@ -139,6 +140,7 @@ def cmd_render(args: argparse.Namespace) -> int:
             with_bgm=not args.no_bgm,
             with_subtitles=not args.no_subs,
             subtitle_language=args.subtitle_lang,
+            burn_subtitles=not args.no_burn_subs,
             use_text_to_video=False if args.no_real_video else None,
             use_lip_sync=False if args.no_lipsync else None,
             on_event=_print_event,
@@ -339,6 +341,9 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--no-bgm", action="store_true")
     rp.add_argument("--no-subs", action="store_true")
     rp.add_argument("--subtitle-lang", default="English", help="Subtitle language")
+    rp.add_argument("--no-burn-subs", action="store_true",
+                    help="keep subtitles as soft tracks only (most players hide those "
+                         "behind a menu) instead of burning them into the picture")
     rp.add_argument("--no-real-video", action="store_true",
                     help="force ffmpeg ken-burns even if FAL_KEY is set (saves API credit)")
     rp.add_argument("--no-lipsync", action="store_true",
@@ -373,6 +378,7 @@ def build_parser() -> argparse.ArgumentParser:
     rd.add_argument("--no-bgm", action="store_true")
     rd.add_argument("--no-subs", action="store_true")
     rd.add_argument("--subtitle-lang", default="English")
+    rd.add_argument("--no-burn-subs", action="store_true")
     rd.add_argument("--no-real-video", action="store_true")
     rd.add_argument("--no-lipsync", action="store_true")
     rd.set_defaults(fn=cmd_render)

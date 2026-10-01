@@ -220,6 +220,34 @@ function connectWs(projectId) {
   ws.onclose = () => appendLog("WS closed");
 }
 
+async function attachSubtitles(projectId) {
+  const player = $("player");
+  player.querySelectorAll("track").forEach((t) => t.remove());
+  let tracks = [];
+  try {
+    tracks = await fetch(`/api/pipeline/subtitles/${projectId}`).then((r) =>
+      r.ok ? r.json() : [],
+    );
+  } catch (e) {
+    return;
+  }
+  // Browsers ignore subtitles embedded in an MP4, so load the WebVTT sidecars.
+  tracks
+    .filter((t) => !t.burned_in)
+    .forEach((t, i) => {
+      const el = document.createElement("track");
+      el.kind = "subtitles";
+      el.label = t.language;
+      el.srclang = t.code;
+      el.src = t.url + "?v=" + Date.now();
+      if (i === 0) el.default = true;
+      player.appendChild(el);
+    });
+  if (tracks.length) {
+    appendLog(`subtitles: ${tracks.map((t) => t.language + (t.burned_in ? " (burned in)" : "")).join(", ")}`);
+  }
+}
+
 async function onPipelineComplete(projectId, payload) {
   appendLog("loading final state");
   const stateData = await fetch(`/api/pipeline/state/${projectId}`).then((r) => r.json());
@@ -230,6 +258,7 @@ async function onPipelineComplete(projectId, payload) {
     $("player").src = url;
     $("downloadVideo").href = url;
     $("downloadRow").style.display = "";
+    attachSubtitles(projectId);
   }
   const meta = {
     title: stateData.script?.story?.title,
