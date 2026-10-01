@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from agents.orchestrator import PipelineOrchestrator
 from state_manager.state_manager import StateManager
 from state_manager.storage import SqliteStorage
-from tests.conftest import run_queued_jobs, silence_tts
+from tests.conftest import run_queued_jobs, signed_in_client, silence_tts
 
 
 @pytest.fixture
@@ -150,7 +150,7 @@ def test_storyboard_api_round_trip(isolated_dirs, monkeypatch):
     monkeypatch.setattr(pipeline_service, "_orchestrator", orch)
     monkeypatch.setattr(pipeline_routes, "sm", sm)
 
-    client = TestClient(app_module.app)
+    client = signed_in_client(app_module.app)
     started = client.post("/api/pipeline/plan", json={
         "prompt": "A night librarian finds the books rearranging into a map",
         "target_duration_s": 24, "scene_count": 2,
@@ -181,7 +181,7 @@ def test_storyboard_api_round_trip(isolated_dirs, monkeypatch):
 
 def test_storyboard_api_404s_for_unknown_projects(isolated_dirs):
     from backend.app import app
-    client = TestClient(app)
+    client = signed_in_client(app)
     assert client.get("/api/pipeline/storyboard/nope").status_code == 404
     assert client.post("/api/pipeline/render/nope", json={}).status_code == 404
     assert client.patch("/api/pipeline/storyboard/nope/scene_1", json={}).status_code == 404

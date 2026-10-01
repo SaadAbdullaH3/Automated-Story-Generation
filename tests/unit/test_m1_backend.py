@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 import jobs
 from backend.app import app
 from backend.services import progress
+from tests.conftest import signed_in_client
 
 
 def test_progress_events_from_worker_thread_arrive_promptly(isolated_dirs):
@@ -38,21 +39,26 @@ def test_progress_events_from_worker_thread_arrive_promptly(isolated_dirs):
     assert elapsed < 1.0
 
 
-def test_projects_video_url_handles_windows_paths(monkeypatch):
+def test_projects_video_url_handles_windows_paths(isolated_dirs, monkeypatch):
     from backend.routes import projects
+    from shared import constants
+    # A path recorded on Windows, backslashes and all — which may well be read
+    # back on Linux, where they are not separators at all.
+    recorded = str(constants.OUTPUTS_DIR / "pid" / "final_output_multilang.mp4")
+    recorded = recorded.replace("/", chr(92))
     state = SimpleNamespace(
         script=None, user_prompt="p", version=2, updated_at="now",
-        video=SimpleNamespace(final_video_path=r"C:\data\outputs\pid\final_output_multilang.mp4"),
+        video=SimpleNamespace(final_video_path=recorded),
     )
     fake_sm = SimpleNamespace(list_projects=lambda: ["pid"], latest=lambda pid: state)
     monkeypatch.setattr(projects, "sm", fake_sm)
-    rows = TestClient(app).get("/api/projects/").json()
+    rows = signed_in_client(app).get("/api/projects/").json()
     assert rows[0]["video_url"] == "/assets/pid/final_output_multilang.mp4"
 
 
-def test_languages_endpoint_matches_shared_table():
+def test_languages_endpoint_matches_shared_table(isolated_dirs):
     from shared.languages import supported_names
-    langs = TestClient(app).get("/api/pipeline/languages").json()
+    langs = signed_in_client(app).get("/api/pipeline/languages").json()
     assert langs == supported_names()
     assert "Urdu" in langs and "Japanese" in langs
 

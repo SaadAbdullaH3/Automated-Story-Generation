@@ -279,6 +279,32 @@ button.secondary { color: var(--accent); }
 .sb-line span { flex: 0 0 82px; font-size: 11px; color: #8b93a7; }
 .sb-frame.saving { opacity: 0.55; }
 
+/* ---- sign-in gate (M5) ---- */
+.gate {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg, #0e1118);
+}
+.gate[hidden] { display: none; }
+.gate-card {
+  width: min(380px, 92vw);
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 28px;
+  border: 1px solid var(--border, #2a2f3d);
+  border-radius: 10px;
+  background: var(--panel, #161a24);
+}
+.gate-card h1 { margin: 0; font-size: 20px; }
+.gate-card label { display: flex; flex-direction: column; gap: 5px; font-size: 12px;
+                   color: var(--muted, #8b93a7); }
+.gate-card input { padding: 9px 10px; border-radius: 6px;
+                   border: 1px solid var(--border, #2a2f3d);
+                   background: var(--panel-2, #1d2230); color: var(--text, #e6e9ef); }
+.gate-error { margin: 0; font-size: 12px; color: #ff8a8a; }
+.gate-error[hidden] { display: none; }
+.account { display: flex; align-items: center; gap: 10px; margin-left: auto;
+           font-size: 12px; color: var(--muted, #8b93a7); }
+
 /* ---- voice picker + job controls (M4) ---- */
 .voice-row select { max-width: 190px; }
 .voice-row audio { display: none; }

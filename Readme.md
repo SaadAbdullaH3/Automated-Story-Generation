@@ -393,6 +393,30 @@ TEST_S3_ENDPOINT=http://127.0.0.1:5111 S3_REGION=us-east-1 \
 Point `TEST_S3_ENDPOINT` at `https://<account>.r2.cloudflarestorage.com` with
 real R2 credentials and the same test verifies Cloudflare R2.
 
+### Accounts
+
+Everything behind `/api` needs one. The first person to open the UI creates the
+administrator account — and inherits any projects that already existed, from
+CLI runs made before accounts did — after which sign-ups are closed unless
+`ALLOW_SIGNUPS=1`.
+
+Sessions are rows, not JWTs: the cookie holds a random token and the database
+stores only its hash, so a stolen dump can't be replayed, signing out really
+signs out, and disabling an account ends its sessions at once. Passwords are
+argon2id. A wrong password and an unknown address give the identical answer,
+and eight failures lock the account for fifteen minutes.
+
+Projects are private to their owner. Asking for someone else's gets a 404
+rather than a 403, because a 403 would confirm the id is real. That applies to
+the films too — `/assets/...` is an authorised route, not a static mount, so a
+guessed project id no longer downloads the video.
+
+```bash
+python main.py users                          # who has an account
+python main.py users create me@example.com --admin
+python main.py users passwd me@example.com    # the way back in
+```
+
 ### Choosing a voice, and hearing it first
 
 The voice engine comes from `config/providers.yaml`, but the UI can override it

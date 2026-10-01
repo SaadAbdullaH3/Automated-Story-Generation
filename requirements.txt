@@ -18,6 +18,9 @@ deep-translator>=1.11.0   # free Google Translate fallback for multi-language su
 # Model settings layer (config/providers.yaml)
 PyYAML>=6.0
 
+# Accounts: argon2id password hashing (never hand-roll this).
+argon2-cffi>=23.1
+
 # Database: the version log and the job queue. SQLite by default (no server
 # needed); set DATABASE_URL to a Postgres URL and add requirements-postgres.txt.
 SQLAlchemy>=2.0

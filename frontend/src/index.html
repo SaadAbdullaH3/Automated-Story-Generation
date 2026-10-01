@@ -7,11 +7,32 @@
   <link rel="stylesheet" href="/static/styles.css"/>
 </head>
 <body>
+<!-- Covers the app until /api/auth/status says someone is signed in. -->
+<div id="gate" class="gate" hidden>
+  <form class="gate-card" id="gateForm">
+    <h1 id="gateTitle">Sign in</h1>
+    <p class="hint" id="gateHint"></p>
+    <label>Email
+      <input type="email" id="gateEmail" autocomplete="username" required/>
+    </label>
+    <label>Password
+      <input type="password" id="gatePassword" autocomplete="current-password" required/>
+    </label>
+    <p class="gate-error" id="gateError" hidden></p>
+    <button class="primary" id="gateSubmit" type="submit">Sign in</button>
+    <p class="hint" id="gateSwitch"></p>
+  </form>
+</div>
+
 <header class="topbar">
   <div class="brand">
     <span class="logo">●</span>
     <span class="title">Agentic Video Generator</span>
     <span class="tag">prompt → animated short</span>
+  </div>
+  <div class="account">
+    <span id="whoami"></span>
+    <button class="secondary small" id="signOut" hidden>Sign out</button>
   </div>
   <div class="provider" id="providerBadge">provider: …</div>
 </header>

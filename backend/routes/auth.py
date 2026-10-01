@@ -1,0 +1,165 @@
+"""Sign up, sign in, sign out, and who am I."""
+from __future__ import annotations
+
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import BaseModel, Field
+
+from auth import accounts, sessions
+from auth.accounts import AuthError, User
+from auth.deps import current_user, require_admin, require_user
+from auth.passwords import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
+from shared.utils.logging import get_logger
+
+router = APIRouter()
+log = get_logger("api.auth")
+
+
+class Credentials(BaseModel):
+    email: str = Field(..., max_length=320)
+    password: str = Field(..., max_length=MAX_PASSWORD_LENGTH)
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(..., max_length=MAX_PASSWORD_LENGTH)
+    new_password: str = Field(..., min_length=MIN_PASSWORD_LENGTH,
+                              max_length=MAX_PASSWORD_LENGTH)
+
+
+class NewUser(BaseModel):
+    email: str = Field(..., max_length=320)
+    password: str = Field(..., max_length=MAX_PASSWORD_LENGTH)
+    role: str = "user"
+
+
+def _start_session(response: Response, user: User, request: Request) -> None:
+    token = sessions.create(
+        user.id,
+        user_agent=request.headers.get("user-agent", ""),
+        ip=request.client.host if request.client else "",
+    )
+    response.set_cookie(sessions.COOKIE_NAME, token,
+                        **sessions.cookie_kwargs(request.url.scheme))
+
+
+@router.get("/status")
+def status(user: Optional[User] = Depends(current_user)):
+    """Public: what the sign-in screen needs to know before anyone is signed in."""
+    return {
+        "authenticated": user is not None,
+        "user": user.as_dict() if user else None,
+        # No accounts yet: the first visitor is setting the thing up.
+        "needs_setup": accounts.count() == 0,
+        "signups_allowed": accounts.signups_allowed(),
+        "min_password_length": MIN_PASSWORD_LENGTH,
+    }
+
+
+@router.post("/register")
+def register(body: Credentials, request: Request, response: Response):
+    """Create an account. The first one is the admin; after that it depends
+    on ALLOW_SIGNUPS, so a private deployment doesn't quietly accept strangers."""
+    if not accounts.signups_allowed():
+        raise HTTPException(403, "sign-ups are closed on this deployment")
+    try:
+        user = accounts.create(body.email, body.password)
+    except AuthError as e:
+        raise HTTPException(400, str(e))
+    _start_session(response, user, request)
+    return {"user": user.as_dict()}
+
+
+@router.post("/login")
+def login(body: Credentials, request: Request, response: Response):
+    try:
+        user = accounts.authenticate(body.email, body.password)
+    except AuthError as e:
+        # 401 with one message for every kind of failure, so the endpoint
+        # can't be used to find out which addresses are registered.
+        raise HTTPException(401, str(e))
+    _start_session(response, user, request)
+    log.info("signed in: %s", user.email)
+    return {"user": user.as_dict()}
+
+
+@router.post("/logout")
+def logout(request: Request, response: Response):
+    token = request.cookies.get(sessions.COOKIE_NAME)
+    if token:
+        sessions.revoke(token)
+    response.delete_cookie(sessions.COOKIE_NAME, path="/")
+    return {"ok": True}
+
+
+@router.get("/me")
+def me(user: User = Depends(require_user)):
+    return user.as_dict()
+
+
+@router.post("/password")
+def change_password(body: PasswordChange, request: Request, response: Response,
+                    user: User = Depends(require_user)):
+    """Change a password and sign every other device out."""
+    try:
+        accounts.authenticate(user.email, body.current_password)
+    except AuthError:
+        raise HTTPException(403, "current password is incorrect")
+    try:
+        accounts.set_password(user.id, body.new_password)
+    except AuthError as e:
+        raise HTTPException(400, str(e))
+    sessions.revoke_all(user.id)
+    _start_session(response, user, request)   # keep this device signed in
+    return {"ok": True, "other_sessions_ended": True}
+
+
+@router.get("/sessions")
+def my_sessions(user: User = Depends(require_user)):
+    return [
+        {"created_at": s.created_at.isoformat(),
+         "last_seen_at": s.last_seen_at.isoformat(),
+         "expires_at": s.expires_at.isoformat(),
+         "user_agent": s.user_agent, "ip": s.ip}
+        for s in sessions.list_for(user.id)
+    ]
+
+
+# ---- administration ----------------------------------------------------------
+
+@router.get("/users")
+def list_users(_admin: User = Depends(require_admin)):
+    return [u.as_dict() for u in accounts.list_users()]
+
+
+@router.post("/users")
+def create_user(body: NewUser, _admin: User = Depends(require_admin)):
+    """Add someone even when open sign-ups are off."""
+    try:
+        user = accounts.create(body.email, body.password, role=body.role)
+    except AuthError as e:
+        raise HTTPException(400, str(e))
+    return user.as_dict()
+
+
+class UserUpdate(BaseModel):
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+@router.patch("/users/{user_id}")
+def update_user(user_id: str, body: UserUpdate, admin: User = Depends(require_admin)):
+    target = accounts.get(user_id)
+    if target is None:
+        raise HTTPException(404, "no such user")
+    if target.id == admin.id and (body.role == "user" or body.is_active is False):
+        # Locking the last admin out of their own deployment is unrecoverable
+        # without the CLI, so it is refused here.
+        raise HTTPException(400, "an admin cannot demote or disable themselves")
+    if body.role is not None:
+        accounts.set_role(user_id, body.role)
+    if body.is_active is not None:
+        accounts.set_active(user_id, body.is_active)
+        if not body.is_active:
+            sessions.revoke_all(user_id)
+    return accounts.get(user_id).as_dict()

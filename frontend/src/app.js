@@ -270,7 +270,16 @@ function connectWs(projectId) {
       alert(`Pipeline failed: ${ev.message}`);
     }
   };
-  ws.onclose = () => appendLog("WS closed");
+  ws.onclose = (ev) => {
+    // 1008 is what the server sends when the session is gone or the project
+    // isn't yours.
+    if (ev.code === 1008) {
+      appendLog("not signed in — reload to sign in again");
+      location.reload();
+      return;
+    }
+    appendLog("WS closed");
+  };
 }
 
 async function attachSubtitles(projectId) {
@@ -537,6 +546,110 @@ function escapeHtml(s) {
   }[c]));
 }
 
+// ---- sign-in gate ----------------------------------------------------------
+
+const gate = {
+  mode: "login",          // or "register"
+  needsSetup: false,
+};
+
+async function authStatus() {
+  try {
+    return await fetch("/api/auth/status").then((r) => r.json());
+  } catch (e) {
+    return { authenticated: false, needs_setup: false, signups_allowed: false };
+  }
+}
+
+function showGate(status) {
+  gate.needsSetup = !!status.needs_setup;
+  gate.mode = status.needs_setup ? "register" : "login";
+  $("gate").hidden = false;
+  paintGate(status);
+}
+
+function paintGate(status) {
+  const registering = gate.mode === "register";
+  $("gateTitle").textContent = gate.needsSetup
+    ? "Create the first account"
+    : registering ? "Create an account" : "Sign in";
+  $("gateHint").textContent = gate.needsSetup
+    ? "Nobody has signed up yet, so this account becomes the administrator."
+    : registering
+      ? `At least ${status.min_password_length || 10} characters.`
+      : "";
+  $("gateSubmit").textContent = registering ? "Create account" : "Sign in";
+  $("gatePassword").setAttribute(
+    "autocomplete", registering ? "new-password" : "current-password");
+
+  const sw = $("gateSwitch");
+  sw.innerHTML = "";
+  if (!gate.needsSetup && status.signups_allowed) {
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "secondary small";
+    link.textContent = registering ? "I already have an account" : "Create an account";
+    link.addEventListener("click", () => {
+      gate.mode = registering ? "login" : "register";
+      $("gateError").hidden = true;
+      paintGate(status);
+    });
+    sw.appendChild(link);
+  }
+}
+
+async function submitGate(event) {
+  event.preventDefault();
+  const path = gate.mode === "register" ? "/api/auth/register" : "/api/auth/login";
+  const error = $("gateError");
+  error.hidden = true;
+  $("gateSubmit").disabled = true;
+  try {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: $("gateEmail").value.trim(),
+        password: $("gatePassword").value,
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      error.textContent = body.detail || "That didn't work.";
+      error.hidden = false;
+      return;
+    }
+    $("gatePassword").value = "";
+    $("gate").hidden = true;
+    onSignedIn(body.user);
+    startApp();
+  } finally {
+    $("gateSubmit").disabled = false;
+  }
+}
+
+function onSignedIn(user) {
+  $("whoami").textContent = user.role === "admin" ? `${user.email} (admin)` : user.email;
+  $("signOut").hidden = false;
+}
+
+async function signOut() {
+  await fetch("/api/auth/logout", { method: "POST" });
+  // A reload is the simplest way to be sure nothing of the last account
+  // is left on screen.
+  location.reload();
+}
+
+// Anything the app loads from the API happens only once there is a session.
+let appStarted = false;
+function startApp() {
+  if (appStarted) return;
+  appStarted = true;
+  loadLanguages();
+  loadVoices();
+  loadProviderBadge();
+}
+
 // ---- wire up ---------------------------------------------------------------
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -551,8 +664,16 @@ document.addEventListener("DOMContentLoaded", () => {
   $("cancelJob").addEventListener("click", cancelJob);
   $("previewVoice").addEventListener("click", previewVoice);
   $("voice-engine").addEventListener("change", fillVoiceSamples);
+  $("gateForm").addEventListener("submit", submitGate);
+  $("signOut").addEventListener("click", signOut);
   bindChips();
-  loadProviderBadge();
-  loadLanguages();
-  loadVoices();
+
+  authStatus().then((status) => {
+    if (status.authenticated) {
+      onSignedIn(status.user);
+      startApp();
+    } else {
+      showGate(status);
+    }
+  });
 });

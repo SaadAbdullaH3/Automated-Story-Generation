@@ -90,6 +90,22 @@ def silence_tts(tools) -> list:
     return calls
 
 
+def signed_in_client(app, email: str = "tester@example.com",
+                     password: str = "a-test-passphrase"):
+    """A TestClient holding an admin session.
+
+    Since M5 the API needs an account for everything, and the first account
+    created is the admin — which is also what the CLI-made projects in these
+    tests belong to.
+    """
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    res = client.post("/api/auth/register",
+                      json={"email": email, "password": password})
+    assert res.status_code == 200, res.text
+    return client
+
+
 def run_queued_jobs(orchestrator=None, limit: int = 10) -> list:
     """Drain the job queue the way a worker process would.
 

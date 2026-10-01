@@ -50,6 +50,51 @@ edit_log = Table(
     Index("idx_edit_log_project", "project_id"),
 )
 
+# ---- accounts ---------------------------------------------------------------
+
+users = Table(
+    "users", metadata,
+    Column("id", String(64), primary_key=True),
+    # Stored lower-cased; the unique index is what stops two signups racing to
+    # the same address.
+    Column("email", String(320), nullable=False),
+    Column("password_hash", Text, nullable=False),
+    Column("role", String(16), nullable=False, default="user"),   # user | admin
+    Column("is_active", Boolean, nullable=False, default=True),
+    Column("created_at", DateTime, nullable=False),
+    Column("last_login_at", DateTime),
+    # Brute-force defence: counted per account, cleared on success.
+    Column("failed_attempts", Integer, nullable=False, default=0),
+    Column("locked_until", DateTime),
+    Index("uq_users_email", "email", unique=True),
+)
+
+sessions = Table(
+    "sessions", metadata,
+    # The id is a hash of the cookie value, never the value itself: a stolen
+    # database dump then can't be replayed as a login.
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(64), nullable=False),
+    Column("created_at", DateTime, nullable=False),
+    Column("expires_at", DateTime, nullable=False),
+    Column("last_seen_at", DateTime, nullable=False),
+    Column("user_agent", String(256)),
+    Column("ip", String(64)),
+    Index("idx_sessions_user", "user_id"),
+    Index("idx_sessions_expiry", "expires_at"),
+)
+
+projects = Table(
+    "projects", metadata,
+    Column("project_id", String(64), primary_key=True),
+    # Null means nobody owns it — made by the CLI, before accounts existed.
+    # Those are visible to admins only.
+    Column("owner_id", String(64)),
+    Column("created_at", DateTime, nullable=False),
+    Index("idx_projects_owner", "owner_id"),
+)
+
+
 # ---- job queue -------------------------------------------------------------
 
 jobs = Table(

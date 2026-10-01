@@ -20,7 +20,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,10 +28,12 @@ from fastapi.staticfiles import StaticFiles
 # Ensure all MCP tools are registered.
 import mcp.tools  # noqa: F401
 
-from shared import assets, db
-from shared.constants import OUTPUTS_DIR
+from auth import accounts
+from auth.deps import require_user
+from shared import assets, constants, db
 from shared.utils.logging import get_logger
 
+from .routes import auth as auth_routes
 from .routes import edit as edit_routes
 from .routes import history as history_routes
 from .routes import jobs as job_routes
@@ -75,23 +77,60 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
-)
+# The UI is served from this same origin, so by default no cross-origin
+# request is allowed at all. "*" with credentials is the combination that lets
+# any site drive a signed-in user's account, so origins must be named.
+_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+if _origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_origins, allow_credentials=True,
+        allow_methods=["*"], allow_headers=["*"],
+    )
 
-app.include_router(pipeline_routes.router, prefix="/api/pipeline", tags=["pipeline"])
-app.include_router(job_routes.router, prefix="/api/jobs", tags=["jobs"])
-app.include_router(edit_routes.router, prefix="/api/edit", tags=["edit"])
-app.include_router(history_routes.router, prefix="/api/history", tags=["history"])
-app.include_router(project_routes.router, prefix="/api/projects", tags=["projects"])
-app.include_router(voice_routes.router, prefix="/api/voices", tags=["voices"])
+# Signing in is the only thing that works signed out.
+app.include_router(auth_routes.router, prefix="/api/auth", tags=["auth"])
+
+# Everything else needs an account. The dependency is declared here, on the
+# router, so a new endpoint is protected the moment it is added — not when
+# someone remembers to decorate it.
+_signed_in = [Depends(require_user)]
+app.include_router(pipeline_routes.router, prefix="/api/pipeline", tags=["pipeline"],
+                   dependencies=_signed_in)
+app.include_router(job_routes.router, prefix="/api/jobs", tags=["jobs"],
+                   dependencies=_signed_in)
+app.include_router(edit_routes.router, prefix="/api/edit", tags=["edit"],
+                   dependencies=_signed_in)
+app.include_router(history_routes.router, prefix="/api/history", tags=["history"],
+                   dependencies=_signed_in)
+app.include_router(project_routes.router, prefix="/api/projects", tags=["projects"],
+                   dependencies=_signed_in)
+app.include_router(voice_routes.router, prefix="/api/voices", tags=["voices"],
+                   dependencies=_signed_in)
 app.include_router(progress_ws.router, prefix="/ws", tags=["websocket"])
 
-# Static asset server — exposes the per-project output directory so the UI can
-# fetch /assets/<project_id>/final_output.mp4, frame images, etc.
-app.mount("/assets", StaticFiles(directory=str(OUTPUTS_DIR)), name="assets")
+# Assets are films and stills, so they are served to their owner only. This
+# used to be a StaticFiles mount, which meant anyone who guessed a project id
+# could download the finished video however locked-down the JSON API was.
+VOICE_PREVIEWS = "_voice_previews"
+
+
+@app.get("/assets/{project_id}/{asset_path:path}")
+def serve_asset(project_id: str, asset_path: str, user=Depends(require_user)):
+    """Serve one generated file, if this account is allowed to see it."""
+    if project_id != VOICE_PREVIEWS and not accounts.may_access(user, project_id):
+        # 404 rather than 403: a different answer would confirm the id exists.
+        raise HTTPException(404, "not found")
+
+    # Resolved per call: bound at import it would ignore a reconfigured
+    # output directory and serve from the wrong place.
+    root = (constants.OUTPUTS_DIR / project_id).resolve()
+    target = (root / asset_path).resolve()
+    # "../.." in the path would otherwise walk out of the outputs directory.
+    if root not in target.parents or not target.is_file():
+        raise HTTPException(404, "not found")
+    # FileResponse answers Range requests, so seeking in the player still works.
+    return FileResponse(target)
 
 # Frontend — single-page app served from /frontend.
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
