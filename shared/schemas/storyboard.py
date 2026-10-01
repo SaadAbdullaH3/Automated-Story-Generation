@@ -27,6 +27,10 @@ class StoryboardFrame(BaseModel):
     setting: str
     visual_prompt: str
     preview_path: Optional[str] = None
+    # What the preview was drawn from. The wide shot of a scene uses the very
+    # same prompt, style and seed, so when this still matches, the render can
+    # use the preview rather than paying for the identical image twice.
+    preview_signature: Optional[str] = None
     dialogue: List[StoryboardLine] = Field(default_factory=list)
     estimated_ms: int = 0
 
@@ -40,8 +44,11 @@ class Storyboard(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     approved_at: Optional[str] = None
-    preview_width: int = 512
-    preview_height: int = 288
+    # Previews are drawn at the render size so they can *be* the wide shot.
+    # They used to be 512x288 thumbnails that were thrown away at render time,
+    # which cost an extra generated image per scene for no benefit.
+    preview_width: int = 1280
+    preview_height: int = 720
 
     @property
     def approved(self) -> bool:
