@@ -179,6 +179,25 @@ Gemini/Groq, 12 of 13 images from Cloudflare FLUX, frame-exact sync, 4/4 lines o
 refused by Cloudflare as NSFW (false positive) and was covered by Pollinations — the
 chain degraded visibly instead of silently. See docs/BENCHMARK.md.
 
+## Post-M3 fixes from watching a real film (2026-10-01)
+
+Saad watched the first live render and reported three things:
+- **Subtitles never appeared** in VLC or anywhere else. The data was fine (extracting the
+  track gave correct Urdu); players simply don't auto-enable mov_text in MP4. Now the
+  chosen language is burned in by default (`--no-burn-subs` opts out, `VideoOutput.
+  burn_subtitles`), the rest stay as soft tracks minus the burned one, and `.srt`/`.vtt`
+  sidecars are written beside the video (VLC auto-loads the .srt; the web player attaches
+  the .vtt via `/api/pipeline/subtitles/{pid}`). Non-Latin scripts get a font with the
+  glyphs — a Latin-only font drops them silently.
+- **Every image looked like anime** regardless of story, from one hardcoded style string.
+  `agents/story_agent/visual_style.py` now derives the look: `StoryOutput.visual_style`
+  (LLM) > genre preset > default, with the scene tone nudging lighting and the wrong look
+  pushed into the negative prompt. `VIDEO_STYLE` overrides everything.
+- **Wanted an open-source voice.** Kokoro (Apache-2.0, onnxruntime, no torch, no GPU,
+  ~340 MB of model files via `scripts/get_kokoro.py`) is now first in the tts chain when
+  `KOKORO_MODEL` is set; ~2 s per line on this laptop. Voice names are per engine
+  (`AudioAgent.voice_for`), so "change voice" picks alternates from the right pool.
+
 ## Known issues / next milestones
 
 - The Pollinations key has a 0 pollen budget, so the keyed endpoint 402s and the keyless
@@ -188,6 +207,5 @@ chain degraded visibly instead of silently. See docs/BENCHMARK.md.
   ~2-3 GB torch install, so they stay optional (deferred again from M3).
 - Storyboard previews are drawn at 512x288 and thrown away at render time; reusing them as
   the wide shot would save one image per scene.
-- The web player can't show MP4 soft subtitles; the UI needs `<track>` WebVTT files (M4 frontend).
 - Snapshots copy every file per version — storage grows quickly (M4: content-addressed storage).
 - Scene-scoped voice edits apply to that scene only until a later global audio edit re-renders it.

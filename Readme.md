@@ -230,7 +230,11 @@ If no LLM key is configured, a deterministic four-act template (in
   on the same boundaries, and subtitles use the same numbers, so voices,
   faces and captions stay in sync for the whole film.
 * **Tools**
-  * **edge-tts** (default, free, online) — Microsoft Azure Neural Voices mapped dynamically to character archetypes (e.g., `en-US-AriaNeural`, `en-US-ChristopherNeural`).
+  * **Kokoro** (open-source, offline, Apache-2.0) — top-rated free voice model,
+    runs on CPU with no key and no GPU. Install with
+    `pip install -r requirements-voices.txt && python scripts/get_kokoro.py`.
+  * **edge-tts** (free, online, no key) — Microsoft neural voices mapped to character
+    archetypes (e.g., `en-US-AriaNeural`, `en-US-ChristopherNeural`).
   * **gTTS** (fallback, free, online)
   * **pyttsx3** (offline fallback)
   * **ElevenLabs** (premium, if API key set)
@@ -251,8 +255,13 @@ Two-tier rendering for cinematic-feeling output **even without paid APIs**:
 Instead of one still per scene, the agent renders a **separate sub-clip for
 every dialogue line** so a 4-scene project becomes ~12-15 cuts:
 
+* Every image is generated in the **film's own visual style**: the LLM proposes one
+  in `visual_style`, otherwise the genre picks a preset (sci-fi concept art, horror,
+  noir, painterly fantasy, anime, ...) and the scene's tone nudges the lighting.
+  `VIDEO_STYLE` in `.env` overrides it. See
+  [`agents/story_agent/visual_style.py`](agents/story_agent/visual_style.py).
 * Generate a **shot bank** of 3 images per scene — wide, detail, alternate
-  angle (Pollinations.ai by default)
+  angle (Cloudflare FLUX / Pollinations by default)
 * Generate one **portrait per character** in the cast
 * Cut each scene to the audio timeline:
   - **Pre-roll** -> the wide establishing shot
@@ -286,9 +295,15 @@ will automatically:
 | (none) | ffmpeg ken-burns | heuristic mouth-zoom |
 
 #### Subtitles & multi-language support
-* Subtitles are embedded as **switchable soft tracks** (pick the language in
-  your player): English + the language chosen in the UI/CLI, plus any listed in
-  `SUBTITLE_EXTRA_LANGUAGES`. Supported languages live in
+* The chosen language is **burned into the picture** by default, because most
+  players don't auto-enable subtitle tracks inside an MP4 (`--no-burn-subs` to
+  opt out). Non-Latin scripts get a font that has the glyphs, and right-to-left
+  languages like Urdu are shaped correctly.
+* The other languages ride along as **switchable soft tracks**, and `.srt` /
+  `.vtt` sidecars are written next to the video — VLC loads the `.srt`
+  automatically, and the web player uses the `.vtt`.
+* Languages: English + the one chosen in the UI/CLI, plus any in
+  `SUBTITLE_EXTRA_LANGUAGES`. Supported list lives in
   [`shared/languages.py`](shared/languages.py) (Urdu, Hindi, Arabic, French,
   Spanish, German, Japanese, Chinese, ...).
 * Translation uses the configured LLM, falling back to MyMemory (free, no key).
@@ -438,11 +453,11 @@ The test suite covers:
 * **State manager** — version increments, asset persistence + restore, edit log
 * **Integration** — full prompt-to-MP4 pipeline in mock/silent mode (≈8 s)
 
-Current results: **136 / 136 passing**.
+Current results: **153 / 153 passing**.
 
 ```
 $ python -m pytest -q
-136 passed in ~3.5 min
+153 passed in ~3 min
 ```
 
 ---

@@ -38,3 +38,6 @@ frontend/.parcel-cache/
 
 # Benchmark reports (generated)
 data/benchmarks/
+
+# Downloaded model files (scripts/get_kokoro.py) — hundreds of MB
+data/models/

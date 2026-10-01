@@ -1,4 +1,13 @@
-"""TTS tool — edge-tts primary, gTTS / pyttsx3 fallbacks, silent placeholder as last resort."""
+"""Text to speech.
+
+Engines, in the order config/providers.yaml usually lists them:
+  kokoro     open-source, offline, Apache-2.0 (needs scripts/get_kokoro.py)
+  edge       free Microsoft neural voices, online, no key
+  elevenlabs premium, needs a key
+  gtts       free, online
+  pyttsx3    offline, robotic
+  silent     silence of the right length (tests)
+"""
 from __future__ import annotations
 import os
 import subprocess
@@ -12,6 +21,9 @@ from shared.utils.logging import get_logger
 log = get_logger("tts")
 
 BASE_RATE_WPM = 175  # VoiceConfig.rate that maps to edge-tts "+0%"
+
+# The Kokoro model is ~310 MB, so it is loaded once per process.
+_KOKORO = None
 
 
 def edge_prosody(rate: int = BASE_RATE_WPM, pitch: int = 0,
@@ -51,6 +63,16 @@ class TtsTool(BaseTool):
             actual = self._silent_wav(out, duration_s=duration)
             return ToolResult(success=True, data=str(actual),
                               metadata={"engine": "silent", "duration_s": duration})
+
+        if engine == "kokoro":
+            try:
+                actual = self._kokoro(text, out, voice, rate=rate)
+                return ToolResult(success=True, data=str(actual),
+                                  metadata={"engine": "kokoro", "voice": voice,
+                                            "speed": round(rate / BASE_RATE_WPM, 2)})
+            except Exception as e:  # noqa: BLE001
+                log.warning("kokoro failed (%s) — falling back to edge-tts", e)
+                engine = "edge"
 
         if engine == "edge":
             try:
@@ -119,6 +141,33 @@ class TtsTool(BaseTool):
                               encoding="utf-8", errors="replace")
         if proc.returncode != 0 or not out.exists() or out.stat().st_size == 0:
             raise RuntimeError((proc.stderr or "edge-tts produced no audio").strip()[-300:])
+        return out
+
+    def _kokoro(self, text: str, out: Path, voice: str = "",
+                rate: int = BASE_RATE_WPM) -> Path:
+        """Kokoro (open-source, offline, CPU). Model files come from scripts/get_kokoro.py."""
+        import numpy as np
+        import soundfile as sf
+        from kokoro_onnx import Kokoro
+
+        model = os.getenv("KOKORO_MODEL", "")
+        voices = os.getenv("KOKORO_VOICES", "")
+        if not (model and voices and Path(model).exists() and Path(voices).exists()):
+            raise RuntimeError(
+                "Kokoro model files not found — run `python scripts/get_kokoro.py` "
+                "and set KOKORO_MODEL / KOKORO_VOICES in .env")
+
+        global _KOKORO
+        if _KOKORO is None:
+            log.info("loading Kokoro voice model (first call only)")
+            _KOKORO = Kokoro(model, voices)
+        samples, sample_rate = _KOKORO.create(
+            text, voice=voice or "af_heart", speed=max(0.5, min(2.0, rate / BASE_RATE_WPM)),
+            lang="en-us",
+        )
+        if out.suffix.lower() != ".wav":
+            out = out.with_suffix(".wav")
+        sf.write(str(out), np.asarray(samples), sample_rate)
         return out
 
     def _pyttsx3(self, text: str, out: Path, rate: int = 175, voice: str = "") -> Path:

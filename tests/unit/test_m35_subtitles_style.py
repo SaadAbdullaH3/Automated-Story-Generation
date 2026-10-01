@@ -144,3 +144,52 @@ def test_images_are_requested_in_the_films_style(isolated_dirs, monkeypatch):
                                     story=state.script.story)
     assert calls and "horror" in calls[0]["style"]
     assert "anime" not in calls[0]["prompt"]          # no hardcoded look any more
+
+
+# ---- open-source voices ----------------------------------------------------
+
+def test_voices_are_named_per_engine():
+    """Each engine has its own voice names; a character must get the right kind."""
+    from agents.audio_agent.agent import AudioAgent
+    from shared.schemas.story import Character
+
+    hero = Character(id="char_a", name="Mira", role="protagonist", description="d",
+                     visual_description="v", voice_gender="female", voice_age="young")
+    narrator = Character(id="char_n", name="Narrator", role="narrator", description="d",
+                         visual_description="v")
+    assert AudioAgent.voice_for(hero, "kokoro").startswith(("af_", "bf_"))
+    assert AudioAgent.voice_for(hero, "edge").startswith("en-")
+    assert AudioAgent.voice_for(narrator, "kokoro") == "bm_george"
+
+
+def test_kokoro_says_how_to_install_itself_when_missing(tmp_path, monkeypatch):
+    monkeypatch.delenv("KOKORO_MODEL", raising=False)
+    monkeypatch.delenv("KOKORO_VOICES", raising=False)
+    from mcp.tools.audio_tools.tts_tool import TtsTool
+    with pytest.raises(RuntimeError, match="get_kokoro"):
+        TtsTool()._kokoro("hello", tmp_path / "a.wav")
+
+
+def test_kokoro_failure_falls_back_to_another_engine(tmp_path, monkeypatch):
+    """A missing model must not cost the user their film."""
+    from mcp.tools.audio_tools import tts_tool
+    monkeypatch.delenv("KOKORO_MODEL", raising=False)
+    monkeypatch.setattr(tts_tool.TtsTool, "_edge_tts",
+                        lambda self, text, out, voice="", **kw: Path(
+                            str(out.with_suffix(".mp3"))).write_bytes(b"ID3") or
+                        out.with_suffix(".mp3"))
+    res = ToolExecutor().execute("audio.tts", text="hello", engine="kokoro",
+                                 out_path=str(tmp_path / "x.mp3"))
+    assert res.success and res.metadata["engine"] == "edge"
+
+
+def test_voice_edits_use_the_engines_own_alternates():
+    from agents.audio_agent.agent import AudioAgent
+    from shared.schemas.audio import VoiceConfig
+    from shared.schemas.story import Character
+
+    hero = Character(id="char_a", name="Mira", role="protagonist", description="d",
+                     visual_description="v", voice_gender="female")
+    cfg = VoiceConfig(character_id="char_a", engine="kokoro", voice_id="af_heart")
+    AudioAgent.apply_voice_params(cfg, {"voice": "alternate"}, hero)
+    assert cfg.voice_id != "af_heart" and cfg.voice_id.startswith(("af_", "bf_"))
