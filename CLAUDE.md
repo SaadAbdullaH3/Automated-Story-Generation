@@ -232,7 +232,10 @@ Saad watched the first live render and reported three things:
   `docker compose up --scale worker=3` runs three renders at once.
 - **Asset URLs in one place.** `shared/assets.py` replaced three hand-built
   `/assets/...` strings; with `STORAGE_URL` set it publishes to an
-  S3-compatible bucket after a job succeeds.
+  S3-compatible bucket after a job succeeds. **Verified against real
+  Cloudflare R2** (2026-10-01): a finished film's 31 referenced assets, 17 MB,
+  uploaded through the worker's own publish step, and the film came back
+  byte-identical over a presigned URL.
 - **Choose and hear the voice.** `/api/voices` says which engines work here and
   why not; `/api/voices/preview` renders a cached one-line sample. The choice
   rides with the run to the audio agent, and a re-run keeps it. A preview that
@@ -273,13 +276,14 @@ Verified against a real Postgres 16 (`docker run postgres:16-alpine`):
   exhausted** by the M4 verification renders (HTTP 429, "you have used up your
   daily free allocation"). It resets daily; until then images fall through to
   Pollinations' keyless endpoint, which is what the chain is for.
-- Using R2 needs three things only the account owner can do: enable R2 (which
-  asks for a payment method even for the free 10 GB), create a bucket, and mint
-  an **R2 API token** — that is a separate S3 access key id + secret, not the
-  Workers AI bearer token. Then:
-  `STORAGE_URL=s3://<bucket>`, `S3_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com`,
-  `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` from that token, and
-  `python -m pytest -k real_s3` with `TEST_S3_ENDPOINT` set proves it in one run.
+- R2 is now set up (bucket `multi-agent-storygen`). Its S3 access key is
+  bucket-scoped, so `ListBuckets` and `HeadBucket` on any other name return
+  403 rather than 404 — the bucket name has to be known, it cannot be
+  discovered. The `cfat_` management token cannot read the Cloudflare API at
+  all (403), which does not matter: only the S3 keys are used.
+  `TEST_S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com
+  TEST_S3_BUCKET=multi-agent-storygen python -m pytest -k real_s3` re-proves
+  it in one run.
 - Testing against a real S3 server found one bug: boto3 defaults to
   virtual-host addressing (`bucket.host`), which needs DNS per bucket and fails
   on R2/MinIO-style endpoints. `shared/assets.py` now uses path addressing
@@ -414,11 +418,12 @@ empty. Use SQLite's backup API (`sqlite3.Connection.backup`) or `VACUUM INTO`.
 - Storyboard previews are drawn at 512x288 and thrown away at render time; reusing them as
   the wide shot would save one image per scene.
 - Snapshots copy every file per version — storage grows quickly (content-addressed storage would fix it).
-- The S3/R2 asset backend has been verified against a real S3 server
-  (`python -m moto.server`), not just a fake client: a finished film's 32
-  assets (19.3 MB) uploaded through the worker's publish step and the film came
-  back byte-identical over a presigned URL. It has **not** run against
-  Cloudflare R2 itself — see below.
+- The S3/R2 asset backend is verified against both a local S3 server
+  (`python -m moto.server`) and **real Cloudflare R2**, bucket
+  `multi-agent-storygen`: 31 assets / 17 MB up, film back byte-identical.
+  `STORAGE_URL` is left unset locally on purpose — the API and the worker
+  share a disk here, so publishing to a bucket would only add latency and
+  one-hour presigned URLs. It is for a deployment where they do not.
 - Two workers on one laptop contend for CPU; concurrency helps across hosts.
 - No password reset by email (no mail service at $0) — `python main.py users
   passwd <email>` is the recovery path, which suits a self-hosted deployment.
