@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from mcp.base_tool import BaseTool, ToolResult
+from shared.timeline import estimate_line_ms
 from shared.utils.logging import get_logger
 
 log = get_logger("tts")
@@ -44,7 +45,9 @@ class TtsTool(BaseTool):
 
         engine = engine.lower()
         if engine == "silent":
-            duration = max(1.0, len(text.split()) / 2.5)
+            # Same speaking-rate estimate the planner uses, so offline runs
+            # behave like real ones.
+            duration = estimate_line_ms(text) / 1000.0
             actual = self._silent_wav(out, duration_s=duration)
             return ToolResult(success=True, data=str(actual),
                               metadata={"engine": "silent", "duration_s": duration})
@@ -84,7 +87,7 @@ class TtsTool(BaseTool):
                 log.warning("pyttsx3 failed (%s) — using silent placeholder", e)
 
         # Last-ditch fallback: silent placeholder of approximate duration.
-        duration = max(1.0, len(text.split()) / 2.5)
+        duration = estimate_line_ms(text) / 1000.0
         actual = self._silent_wav(out, duration_s=duration)
         return ToolResult(success=True, data=str(actual),
                           metadata={"engine": "silent", "duration_s": duration})

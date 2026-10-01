@@ -6,10 +6,15 @@ from pydantic import BaseModel, Field
 
 from .story import ScriptOutput
 from .audio import AudioOutput
+from .storyboard import Storyboard
 from .video import VideoOutput
 
 
 PhaseStatus = Literal["pending", "running", "complete", "failed", "skipped"]
+# draft      -> nothing generated yet
+# storyboard -> script + preview images, waiting for approval
+# rendered   -> the full film exists
+Stage = Literal["draft", "storyboard", "rendered"]
 
 
 class PhaseState(BaseModel):
@@ -30,7 +35,9 @@ class PipelineState(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
+    stage: Stage = "draft"
     script: Optional[ScriptOutput] = None
+    storyboard: Optional[Storyboard] = None
     audio: Optional[AudioOutput] = None
     video: Optional[VideoOutput] = None
 

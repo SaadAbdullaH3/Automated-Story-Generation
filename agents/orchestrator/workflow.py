@@ -5,12 +5,15 @@ streaming, and snapshots the final state via StateManager.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Callable, Iterator, List, Optional
+from datetime import datetime
+from typing import Callable, Dict, Iterator, List, Optional
 
 from agents.audio_agent import AudioAgent
 from agents.story_agent import StoryAgent
 from agents.video_agent import VideoAgent
+from shared.constants import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH
 from shared.schemas.pipeline import PipelineState
+from shared.timeline import LINE_GAP_MS, SCENE_PREROLL_MS, SCENE_TAIL_MS, estimate_line_ms
 from shared.utils.ids import new_project_id
 from shared.utils.logging import get_logger
 from state_manager.snapshot import referenced_files
@@ -54,6 +57,9 @@ class PipelineOrchestrator:
         project_id: Optional[str] = None,
         use_text_to_video: Optional[bool] = None,
         use_lip_sync: Optional[bool] = None,
+        width: int = DEFAULT_WIDTH,
+        height: int = DEFAULT_HEIGHT,
+        fps: int = DEFAULT_FPS,
     ) -> PipelineState:
         project_id = project_id or new_project_id()
         state = PipelineState(project_id=project_id, user_prompt=prompt)
@@ -66,6 +72,7 @@ class PipelineOrchestrator:
             subtitle_language=subtitle_language,
             use_text_to_video=use_text_to_video,
             use_lip_sync=use_lip_sync,
+            width=width, height=height, fps=fps,
         )
 
         graph = self._build_graph()
@@ -84,6 +91,7 @@ class PipelineOrchestrator:
             raise
 
         # Final snapshot.
+        state.stage = "rendered"
         version = self.sm.snapshot(
             state,
             asset_paths=self._collect_assets(state),
@@ -92,6 +100,138 @@ class PipelineOrchestrator:
         emit(ProgressEvent(phase="complete", status="complete", project_id=project_id,
                            message=f"Pipeline finished — version {version.version}",
                            progress=1.0,
+                           payload={"version": version.version,
+                                    "video_path": state.video.final_video_path
+                                    if state.video else None}))
+        return state
+
+    # ---- storyboard: plan cheaply, approve, then render ------------------
+
+    def plan(
+        self,
+        prompt: str,
+        on_event: Optional[Callable[[ProgressEvent], None]] = None,
+        target_duration_s: int = 45,
+        scene_count: int = 4,
+        project_id: Optional[str] = None,
+        with_preview: bool = True,
+        preview_width: int = 512,
+        preview_height: int = 288,
+    ) -> PipelineState:
+        """Write the script and draw one preview image per scene.
+
+        This is the cheap half of the pipeline: no voices, no video. The result
+        is a storyboard to review and edit before `render` spends the rest.
+        """
+        project_id = project_id or new_project_id()
+        state = PipelineState(project_id=project_id, user_prompt=prompt)
+        emit = on_event or (lambda _e: None)
+        emit(ProgressEvent(phase="story", status="started", project_id=project_id,
+                           message="Writing the script", progress=0.1))
+        try:
+            self.story.run(state, target_duration_s=target_duration_s, scene_count=scene_count)
+            emit(ProgressEvent(phase="story", status="complete", project_id=project_id,
+                               message="Script ready", progress=0.4))
+            if with_preview:
+                emit(ProgressEvent(phase="storyboard", status="started", project_id=project_id,
+                                   message="Drawing storyboard previews", progress=0.5))
+                self.video.generate_storyboard(state, width=preview_width,
+                                               height=preview_height)
+            state.stage = "storyboard"
+        except Exception as e:  # noqa: BLE001
+            emit(ProgressEvent(phase="error", status="failed", project_id=project_id,
+                               message=str(e), progress=1.0))
+            raise
+
+        version = self.sm.snapshot(state, asset_paths=self._collect_assets(state),
+                                   description="storyboard")
+        emit(ProgressEvent(phase="storyboard", status="complete", project_id=project_id,
+                           message=f"Storyboard ready — {len(state.script.scenes)} scenes",
+                           progress=1.0,
+                           payload={"version": version.version,
+                                    "scenes": len(state.script.scenes)}))
+        return state
+
+    def update_storyboard(self, project_id: str, scene_id: str,
+                          title: Optional[str] = None, setting: Optional[str] = None,
+                          visual_prompt: Optional[str] = None,
+                          dialogue: Optional[Dict[str, str]] = None,
+                          regenerate_preview: bool = True) -> PipelineState:
+        """Edit one storyboard scene (and redraw its preview if the visuals changed)."""
+        state = self.sm.latest(project_id)
+        if not state or not state.script:
+            raise ValueError(f"no storyboard for {project_id}")
+        scene = next((s for s in state.script.scenes if s.scene_id == scene_id), None)
+        if not scene:
+            raise ValueError(f"unknown scene '{scene_id}'")
+
+        visual_changed = visual_prompt is not None and visual_prompt != scene.visual_prompt
+        if title is not None:
+            scene.title = title
+        if setting is not None:
+            scene.setting = setting
+        if visual_changed:
+            scene.visual_prompt = visual_prompt
+        for line_id, text in (dialogue or {}).items():
+            line = next((ln for ln in scene.dialogue if ln.line_id == line_id), None)
+            if not line:
+                raise ValueError(f"unknown line '{line_id}' in {scene_id}")
+            line.text = text
+            line.duration_ms = estimate_line_ms(text)
+        if dialogue:
+            # Keep the scene's estimated length in step with its new lines.
+            scene.duration_ms = (SCENE_PREROLL_MS + SCENE_TAIL_MS
+                                 + sum(ln.duration_ms for ln in scene.dialogue)
+                                 + LINE_GAP_MS * max(0, len(scene.dialogue) - 1))
+
+        self.story.serialize(state)
+        board = state.storyboard
+        self.video.generate_storyboard(
+            state,
+            width=board.preview_width if board else 512,
+            height=board.preview_height if board else 288,
+            scene_ids=[scene_id] if (visual_changed and regenerate_preview) else [],
+        )
+        self.sm.snapshot(state, asset_paths=self._collect_assets(state),
+                         description=f"storyboard edit: {scene_id}")
+        return state
+
+    def render(
+        self,
+        project_id: str,
+        on_event: Optional[Callable[[ProgressEvent], None]] = None,
+        with_bgm: bool = True,
+        with_subtitles: bool = True,
+        subtitle_language: str = "English",
+        use_text_to_video: Optional[bool] = None,
+        use_lip_sync: Optional[bool] = None,
+    ) -> PipelineState:
+        """Render an approved storyboard into the finished film."""
+        state = self.sm.latest(project_id)
+        if not state or not state.script:
+            raise ValueError(f"no storyboard to render for {project_id}")
+        emit = on_event or (lambda _e: None)
+        ctx = RunContext(state=state, with_bgm=with_bgm, with_subtitles=with_subtitles,
+                         subtitle_language=subtitle_language,
+                         use_text_to_video=use_text_to_video, use_lip_sync=use_lip_sync)
+        try:
+            self._render_graph().run(
+                ctx,
+                on_node=lambda name, _c: emit(self._node_event(name, project_id, done=False)),
+                on_node_done=lambda name, _c: emit(self._node_event(name, project_id, done=True)),
+            )
+        except Exception as e:  # noqa: BLE001
+            emit(ProgressEvent(phase="error", status="failed", project_id=project_id,
+                               message=str(e), progress=1.0))
+            raise
+
+        if state.storyboard:
+            state.storyboard.approved_at = datetime.utcnow().isoformat()
+        state.stage = "rendered"
+        version = self.sm.snapshot(state, asset_paths=self._collect_assets(state),
+                                   description="rendered from storyboard")
+        emit(ProgressEvent(phase="complete", status="complete", project_id=project_id,
+                           message=f"Film rendered — version {version.version}", progress=1.0,
                            payload={"version": version.version,
                                     "video_path": state.video.final_video_path
                                     if state.video else None}))
@@ -169,6 +309,23 @@ class PipelineOrchestrator:
         g.add("phase2_audio",
               lambda c: self.audio.run(c.state, with_bgm=c.with_bgm),
               next_=["phase3_video"])
+        g.add("phase3_video",
+              lambda c: self.video.run(
+                  c.state, with_subtitles=c.with_subtitles,
+                  subtitle_language=c.subtitle_language,
+                  width=c.width, height=c.height, fps=c.fps,
+                  use_text_to_video=c.use_text_to_video,
+                  use_lip_sync=c.use_lip_sync,
+              ),
+              next_=[])
+        return g
+
+    def _render_graph(self) -> PipelineGraph:
+        """Phases 2-3 only — used when rendering an approved storyboard."""
+        g = PipelineGraph()
+        g.add("phase2_audio",
+              lambda c: self.audio.run(c.state, with_bgm=c.with_bgm),
+              next_=["phase3_video"], entry=True)
         g.add("phase3_video",
               lambda c: self.video.run(
                   c.state, with_subtitles=c.with_subtitles,

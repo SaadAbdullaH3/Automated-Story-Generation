@@ -32,7 +32,12 @@
           <option value="English">English</option>
         </select>
       </div>
-      <button id="runBtn" class="primary">Generate</button>
+      <div class="row">
+        <button id="planBtn" class="primary">Plan storyboard</button>
+        <button id="runBtn" class="secondary">Generate everything</button>
+      </div>
+      <p class="hint">Planning writes the script and one preview image per scene so you
+        can fix the story before paying for the full render.</p>
     </div>
 
     <div class="card">
@@ -41,6 +46,11 @@
         <div class="phase" id="phase-story">
           <div class="dot"></div>
           <div class="label">Story &amp; Script</div>
+          <div class="bar"><span></span></div>
+        </div>
+        <div class="phase" id="phase-storyboard">
+          <div class="dot"></div>
+          <div class="label">Storyboard</div>
           <div class="bar"><span></span></div>
         </div>
         <div class="phase" id="phase-audio">
@@ -63,10 +73,19 @@
     </div>
   </section>
 
-  <!-- Middle: video preview -->
+  <!-- Middle: storyboard + video preview -->
   <section class="col col-mid">
+    <div class="card" id="storyboardCard" style="display:none">
+      <h2>3. Storyboard <small>review before rendering</small></h2>
+      <div id="storyboardMeta" class="meta"></div>
+      <div id="storyboardList" class="storyboard"></div>
+      <div class="row">
+        <button id="renderBtn" class="primary">Render this film</button>
+      </div>
+    </div>
+
     <div class="card preview">
-      <h2>3. Preview</h2>
+      <h2>4. Preview</h2>
       <video id="player" controls poster=""></video>
       <div class="row" id="downloadRow" style="display:none">
         <a id="downloadVideo" class="primary" download>Download MP4</a>
@@ -78,7 +97,7 @@
   <!-- Right column: edit agent + history -->
   <section class="col col-right">
     <div class="card">
-      <h2>4. Edit Agent <small>natural-language</small></h2>
+      <h2>5. Edit Agent <small>natural-language</small></h2>
       <input id="editQuery" placeholder='e.g. "make scene 2 darker", "add subtitles", "speed up"' />
       <div class="row">
         <button class="primary" id="applyEdit" disabled>Apply edit</button>
@@ -98,7 +117,7 @@
     </div>
 
     <div class="card">
-      <h2>5. Version history</h2>
+      <h2>6. Version history</h2>
       <div id="historyList" class="history">No versions yet.</div>
     </div>
   </section>

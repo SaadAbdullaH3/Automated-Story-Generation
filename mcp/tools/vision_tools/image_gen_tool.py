@@ -180,11 +180,20 @@ class ImageGenTool(BaseTool):
         import requests
         encoded = urllib.parse.quote(prompt)
         key = os.getenv("POLLINATIONS_API_KEY")
-        if key:
+        if key and not _KEYLESS_POLLINATIONS:
             model = os.getenv("POLLINATIONS_MODEL", spec.model or "tongyi-mai/z-image-turbo")
             url = (f"https://gen.pollinations.ai/image/{encoded}"
                    f"?model={urllib.parse.quote(model, safe='')}&width={w}&height={h}&seed={seed}")
             r = requests.get(url, headers={"Authorization": f"Bearer {key}"}, timeout=120)
+            if r.status_code in (401, 402, 403):
+                # The key has no pollen budget (or was rejected): the keyless
+                # endpoint still works, so use it for the rest of the run.
+                _KEYLESS_POLLINATIONS.add(True)
+                _warn_once("pollinations_keyless",
+                           "Pollinations key rejected (HTTP %d) — falling back to the "
+                           "keyless endpoint. Give the key a pollen budget at "
+                           "enter.pollinations.ai to use the better models.", r.status_code)
+                return self._provider_pollinations(spec, prompt, negative, out, w, h, seed)
             endpoint = "gen"
         else:
             model = "flux"
@@ -217,13 +226,21 @@ class ImageGenTool(BaseTool):
         import requests
         account = os.environ["CLOUDFLARE_ACCOUNT_ID"]
         model = spec.model or "@cf/black-forest-labs/flux-1-schnell"
+        url = f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}"
+        headers = {"Authorization": f"Bearer {os.environ['CLOUDFLARE_API_TOKEN']}",
+                   "Content-Type": "application/json"}
         payload = {"prompt": prompt[:2048], "seed": seed, **spec.params}
-        r = requests.post(
-            f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}",
-            headers={"Authorization": f"Bearer {os.environ['CLOUDFLARE_API_TOKEN']}",
-                     "Content-Type": "application/json"},
-            json=payload, timeout=180,
-        )
+
+        r = requests.post(url, headers=headers, json=payload, timeout=180)
+        # Each model validates its own input schema (flux-1-schnell rejects `seed`).
+        # The error names the field, so drop it and try once more.
+        if r.status_code == 400:
+            unsupported = _rejected_field(r.text)
+            if unsupported and unsupported in payload:
+                _warn_once(f"cf_drop_{model}_{unsupported}",
+                           "Cloudflare model %s does not accept %r — dropping it", model, unsupported)
+                payload.pop(unsupported)
+                r = requests.post(url, headers=headers, json=payload, timeout=180)
         if r.status_code >= 400:
             raise RuntimeError(f"HTTP {r.status_code}: {r.text[:300]}")
         if r.headers.get("content-type", "").startswith("image/"):
@@ -336,6 +353,15 @@ class ImageGenTool(BaseTool):
 # ---- helpers ------------------------------------------------------------
 
 _WARNED: set = set()
+# Set once a keyed Pollinations call is refused, so we stop retrying with the key.
+_KEYLESS_POLLINATIONS: set = set()
+
+
+def _rejected_field(body: str) -> Optional[str]:
+    """Pull the offending property name out of a Cloudflare schema error."""
+    import re
+    match = re.search(r"properties '/([A-Za-z_]+)'", body)
+    return match.group(1) if match else None
 
 
 def _is_permanent(error: Exception) -> bool:

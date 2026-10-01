@@ -6,9 +6,10 @@ const state = {
   projectId: null,
   ws: null,
   intent: null,
+  storyboard: null,
 };
 
-const PHASES = ["story", "audio", "video"];
+const PHASES = ["story", "storyboard", "audio", "video"];
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -45,6 +46,116 @@ function setRerunButtons(enabled) {
   });
   $("applyEdit").disabled = !enabled;
   $("classifyEdit").disabled = !enabled;
+}
+
+// ---- storyboard ------------------------------------------------------------
+
+function promptBody() {
+  return {
+    prompt: $("prompt").value.trim(),
+    target_duration_s: parseInt($("duration").value, 10),
+    scene_count: parseInt($("scenes").value, 10),
+  };
+}
+
+async function startPlan() {
+  const body = promptBody();
+  if (!body.prompt) {
+    alert("Enter a prompt first.");
+    return;
+  }
+  resetPhases();
+  $("log").textContent = "";
+  $("storyboardCard").style.display = "none";
+  $("downloadRow").style.display = "none";
+  appendLog("POST /api/pipeline/plan …");
+  const res = await fetch("/api/pipeline/plan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, with_preview: true }),
+  }).then((r) => r.json());
+  state.projectId = res.project_id;
+  appendLog(`project_id = ${res.project_id}`);
+  connectWs(res.project_id);
+}
+
+async function loadStoryboard(projectId) {
+  const board = await fetch(`/api/pipeline/storyboard/${projectId}`).then((r) =>
+    r.ok ? r.json() : null,
+  );
+  if (!board) return;
+  state.storyboard = board;
+  $("storyboardCard").style.display = "";
+  $("storyboardMeta").textContent =
+    `${board.title} — ${board.frames.length} scenes, about ` +
+    `${Math.round(board.frames.reduce((t, f) => t + (f.estimated_ms || 0), 0) / 1000)}s`;
+  $("storyboardList").innerHTML = board.frames
+    .map(
+      (f) => `
+    <div class="sb-frame" data-scene="${f.scene_id}">
+      <img src="${f.preview_url ? f.preview_url + "?v=" + Date.now() : ""}" alt="${escapeHtml(f.title)}"/>
+      <div class="sb-body">
+        <h4>${escapeHtml(f.scene_id)} · <input data-field="title" value="${escapeHtml(f.title)}"/></h4>
+        <textarea data-field="visual_prompt" rows="2">${escapeHtml(f.visual_prompt)}</textarea>
+        ${f.dialogue
+          .map(
+            (l) => `<div class="sb-line"><span>${escapeHtml(l.character_name || l.character_id)}</span>
+                     <input data-line="${l.line_id}" value="${escapeHtml(l.text)}"/></div>`,
+          )
+          .join("")}
+        <button class="secondary sb-save">Save scene</button>
+      </div>
+    </div>`,
+    )
+    .join("");
+  document.querySelectorAll(".sb-save").forEach((btn) => {
+    btn.addEventListener("click", () => saveScene(btn.closest(".sb-frame")));
+  });
+}
+
+async function saveScene(frameEl) {
+  const sceneId = frameEl.dataset.scene;
+  const body = { dialogue: {} };
+  frameEl.querySelectorAll("[data-field]").forEach((el) => {
+    body[el.dataset.field] = el.value;
+  });
+  frameEl.querySelectorAll("[data-line]").forEach((el) => {
+    body.dialogue[el.dataset.line] = el.value;
+  });
+  frameEl.classList.add("saving");
+  appendLog(`saving ${sceneId} …`);
+  const res = await fetch(
+    `/api/pipeline/storyboard/${state.projectId}/${sceneId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  frameEl.classList.remove("saving");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(`Save failed: ${err.detail || res.statusText}`);
+    return;
+  }
+  appendLog(`${sceneId} updated`);
+  loadStoryboard(state.projectId);
+}
+
+async function renderStoryboard() {
+  if (!state.projectId) return;
+  resetPhases();
+  appendLog("POST /api/pipeline/render …");
+  const res = await fetch(`/api/pipeline/render/${state.projectId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      with_bgm: $("bgm").checked,
+      with_subtitles: $("subs").checked,
+      subtitle_language: $("sub-lang").value,
+    }),
+  }).then((r) => r.json());
+  connectWs(res.project_id);
 }
 
 // ---- pipeline run ----------------------------------------------------------
@@ -96,6 +207,10 @@ function connectWs(projectId) {
     if (!ev) return;
     appendLog(`${ev.phase}: ${ev.message || ev.status} (${Math.round((ev.progress||0)*100)}%)`);
     setPhaseProgress(ev.phase, ev.status, ev.progress);
+    if (ev.phase === "storyboard" && ev.status === "complete") {
+      loadStoryboard(projectId);
+      setRerunButtons(false);
+    }
     if (ev.phase === "complete") {
       onPipelineComplete(projectId, ev.payload || {});
     } else if (ev.phase === "error") {
@@ -278,6 +393,8 @@ function escapeHtml(s) {
 
 document.addEventListener("DOMContentLoaded", () => {
   $("runBtn").addEventListener("click", startRun);
+  $("planBtn").addEventListener("click", startPlan);
+  $("renderBtn").addEventListener("click", renderStoryboard);
   $("rerunStory").addEventListener("click", () => rerunPhase("story"));
   $("rerunAudio").addEventListener("click", () => rerunPhase("audio"));
   $("rerunVideo").addEventListener("click", () => rerunPhase("video"));

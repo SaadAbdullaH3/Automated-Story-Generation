@@ -27,8 +27,10 @@ EMPTY_SCENE_MS = 4000     # length of a scene with no dialogue (if the script gi
 SHOT_XFADE_MS = 200       # between shots inside a scene
 SCENE_XFADE_MS = 400      # between scenes
 
-# Speaking-rate estimate used for planning before TTS exists.
-WORDS_PER_SECOND = 2.6
+# Speaking-rate estimate used for planning before TTS exists. Calibrated against
+# real edge-tts renders (2026-09-22): planning at 2.6 w/s overshot the target
+# length by ~17%, because the neural voices speak slower than that.
+WORDS_PER_SECOND = 2.2
 MIN_LINE_MS = 1200
 
 

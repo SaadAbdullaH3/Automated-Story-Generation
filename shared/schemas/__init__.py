@@ -2,7 +2,8 @@
 from .story import Character, Scene, DialogueLine, StoryOutput, ScriptOutput, CharacterRoster
 from .audio import VoiceConfig, AudioSegment, SceneTiming, TimingManifest, AudioOutput
 from .video import VisualPrompt, SceneFrame, VideoOutput, Shot, CharacterPortrait
-from .pipeline import PipelineState, PhaseStatus, PipelineVersion
+from .pipeline import PipelineState, PhaseStatus, PipelineVersion, Stage
+from .storyboard import Storyboard, StoryboardFrame, StoryboardLine
 from .edit import EditIntent, EditTarget, EditCommand, EditResult
 
 __all__ = [
@@ -25,6 +26,10 @@ __all__ = [
     "PipelineState",
     "PhaseStatus",
     "PipelineVersion",
+    "Stage",
+    "Storyboard",
+    "StoryboardFrame",
+    "StoryboardLine",
     "EditIntent",
     "EditTarget",
     "EditCommand",

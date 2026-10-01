@@ -35,3 +35,6 @@ frontend/.parcel-cache/
 # Claude Code runtime files
 .claude/scheduled_tasks.lock
 .claude/tasks/
+
+# Benchmark reports (generated)
+data/benchmarks/

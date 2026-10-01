@@ -19,6 +19,10 @@ class Character(BaseModel):
     )
     voice_gender: Literal["male", "female", "neutral"] = "neutral"
     voice_age: Literal["child", "young", "adult", "elderly"] = "adult"
+    # Locked look: the canonical description + fixed seed every image prompt uses,
+    # so the character doesn't change face between shots (agents/story_agent/appearance.py).
+    appearance_lock: str = ""
+    image_seed: Optional[int] = None
 
 
 class CharacterRoster(BaseModel):

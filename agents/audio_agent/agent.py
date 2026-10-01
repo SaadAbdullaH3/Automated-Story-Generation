@@ -34,7 +34,8 @@ log = get_logger("audio_agent")
 
 DEFAULT_VOICE = "en-US-GuyNeural"
 _SILENT = ProviderSpec(role="tts", provider="silent")
-BGM_VOLUME = 0.18
+# Music sits louder than it used to because it ducks under dialogue.
+BGM_VOLUME = 0.32
 
 # Alternate edge-tts voices per gender, used by "change voice" edits.
 VOICE_POOL = {

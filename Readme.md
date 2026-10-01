@@ -77,6 +77,17 @@ python main.py "A young astronaut discovers a hidden ocean on Mars"
 
 You'll see per-phase progress and a final `data/outputs/<project_id>/final_output.mp4`.
 
+Or **plan first and render once you're happy** — the script and one preview
+image per scene cost seconds; the full render costs minutes:
+
+```bash
+python main.py plan "A young astronaut discovers a hidden ocean on Mars" --scenes 4
+python main.py restyle <project_id> scene_2 --visual "the ocean seen through cracked ice"
+python main.py render  <project_id>
+```
+
+The web UI has the same flow: **Plan storyboard**, edit any scene, **Render this film**.
+
 ### 4. Run the web UI
 
 ```bash
@@ -226,6 +237,9 @@ If no LLM key is configured, a deterministic four-act template (in
   * **silent placeholder** (always works — used in tests)
   * Background music synthesised by ffmpeg's `lavfi` filter graph
     (mood-keyed sine layers + tremolo + fade)
+* **Mix** — music is side-chained to the dialogue (it ducks ~6 dB while a line
+  plays and returns in the gaps) and the master is normalised to -16 LUFS, so
+  levels are consistent between films
 * **Output** — `AudioOutput` + flat `timing_manifest.json`
 
 ### Phase 3 — Video Generation (`agents/video_agent/`)
@@ -305,6 +319,18 @@ will automatically:
   WS   /ws/progress/<pid>             live progress events
   GET  /assets/<pid>/<file>           static asset server
   ```
+
+### Storyboard — plan, review, then render
+
+`plan` writes the script and one small preview image per scene and stops.
+Review the scenes, edit titles, visuals or dialogue (changing the visuals
+redraws just that preview), then `render`. Every step is snapshotted, so a
+storyboard edit is undoable like any other change.
+
+Characters carry an **appearance lock** — their description topped up with
+stable details for whatever the writer left vague — plus a fixed image seed,
+so a character doesn't change face between shots or after a re-render.
+"Change character design" re-rolls both, deliberately, and keeps the new look.
 
 ### Phase 5 — Intelligent Edit & Undo (`agents/edit_agent/`)
 
@@ -387,8 +413,15 @@ FastAPI with **no build step** — just `python main.py serve`.
 ## Testing
 
 ```bash
-python -m pytest -q
+python -m pytest -q                     # full suite, offline
+python scripts/benchmark.py --offline   # fixed prompts, measured
 ```
+
+`scripts/benchmark.py` runs a fixed set of prompts and reports, per run: time
+per phase, film length vs target, whether the video matched the audio timeline
+exactly, whether every line landed on a cut, and which provider served each
+image (so a silent downgrade shows up as a number). Reports land in
+`data/benchmarks/` and can be written as markdown with `--out`.
 
 The test suite covers:
 
@@ -405,11 +438,11 @@ The test suite covers:
 * **State manager** — version increments, asset persistence + restore, edit log
 * **Integration** — full prompt-to-MP4 pipeline in mock/silent mode (≈8 s)
 
-Current results: **87 / 87 passing**.
+Current results: **136 / 136 passing**.
 
 ```
 $ python -m pytest -q
-87 passed in 62s
+136 passed in ~3.5 min
 ```
 
 ---
