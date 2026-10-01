@@ -320,11 +320,17 @@ will automatically:
 * **Frontend** — vanilla HTML/CSS/JS single-page (no build step)
 * **Endpoints**
   ```
-  POST /api/pipeline/run              start a new pipeline
+  POST /api/pipeline/run              queue a new pipeline run
   POST /api/pipeline/rerun            re-run phase 1/2/3
   GET  /api/pipeline/state/<pid>      current full state
   GET  /api/pipeline/status/<pid>     lightweight status snapshot
   GET  /api/pipeline/languages        supported subtitle languages
+  GET  /api/jobs/                     the queue (filter by project or status)
+  GET  /api/jobs/<id>                 one job: status, attempts, error
+  POST /api/jobs/<id>/cancel          stop a run
+  GET  /api/voices/                   engines available here, and their voices
+  POST /api/voices/preview            render a one-line sample to listen to
+  GET  /health  ·  GET /ready         liveness, and can it reach the database
   POST /api/edit/classify             classify intent only
   POST /api/edit/apply                apply an edit (versioned)
   GET  /api/edit/log/<pid>            edit history
@@ -334,6 +340,49 @@ will automatically:
   WS   /ws/progress/<pid>             live progress events
   GET  /assets/<pid>/<file>           static asset server
   ```
+
+### Runs are jobs, not requests
+
+Starting a run writes a row and returns immediately; a worker claims it and
+does the work. That is what makes the run survive a restart, watchable from
+another process, and stoppable:
+
+```bash
+python main.py serve            # API + a worker thread: one command, laptop-friendly
+python main.py jobs             # what is queued, running, failed — and why
+```
+
+Claiming is one atomic `UPDATE`, so two workers never take the same job.
+Progress events are rows too, so a browser that reconnects replays what it
+missed instead of waiting on an empty socket. A worker that dies mid-render
+stops heartbeating and its job goes back on the queue, bounded by
+`max_attempts` so a reproducible failure can't loop forever. Cancelling lands
+between pipeline steps, so nothing is killed half-way through an ffmpeg call.
+
+To scale the API and the renderers apart, set `WORKER_INLINE=0` and run
+`python main.py worker` as its own process — or use the containers:
+
+```bash
+docker compose up --build --scale worker=3   # API + 3 workers + Postgres
+```
+
+`DATABASE_URL` switches the version log and the queue from the default SQLite
+file to Postgres; `STORAGE_URL=s3://bucket` publishes finished films to any
+S3-compatible bucket (Cloudflare R2 is free to 10 GB) so the API and the
+workers don't have to share a disk.
+
+### Choosing a voice, and hearing it first
+
+The voice engine comes from `config/providers.yaml`, but the UI can override it
+per film. The picker lists every engine, marks the ones this machine can't use
+with the reason ("run `python scripts/get_kokoro.py`"), and renders a one-line
+sample on demand so a voice can be heard before committing to a full render.
+If an engine fails and the tool falls back, the preview says so rather than
+playing another engine's voice as the one that was chosen.
+
+```bash
+python main.py "a prompt" --voice-engine kokoro   # or edge, gtts, pyttsx3
+```
 
 ### Storyboard — plan, review, then render
 

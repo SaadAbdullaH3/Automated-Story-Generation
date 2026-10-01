@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 # Ensure all MCP tools are registered.
 import mcp.tools  # noqa: F401
 
-from shared import db
+from shared import assets, db
 from shared.constants import OUTPUTS_DIR
 from shared.utils.logging import get_logger
 
@@ -127,5 +127,6 @@ def ready():
     return {
         "status": "ok",
         "database": db.get_engine().dialect.name,
+        "storage": assets.backend_name(),
         "inline_worker": bool(thread and thread.is_alive()),
     }

@@ -35,8 +35,14 @@ METHODS = {
 HEARTBEAT_S = 15.0
 
 
-class JobCancelled(Exception):
-    """Raised inside a running job when someone asks it to stop."""
+class JobCancelled(BaseException):
+    """Raised inside a running job when someone asks it to stop.
+
+    It derives from BaseException, not Exception, for the same reason
+    KeyboardInterrupt does: the pipeline is full of `except Exception` blocks
+    that log a failure and carry on, and a deliberate stop is not a failure.
+    Catching it there made a cancelled run report an error to the UI first.
+    """
 
 
 def worker_id() -> str:
@@ -106,9 +112,31 @@ def run_job(job: queue.Job, orchestrator=None) -> str:
                                message=detail, progress=1.0)
             return status
 
+    try:
+        _publish_assets(job)
+    except Exception:  # noqa: BLE001 — the film exists; publishing is a bonus
+        log.exception("job %s finished but its assets could not be published", job.id)
     queue.complete(job.id)
     log.info("job %s finished", job.id)
     return "succeeded"
+
+
+def _publish_assets(job: queue.Job) -> None:
+    """Hand the finished files to the asset store.
+
+    A no-op on local disk. With object storage configured this is what makes a
+    render done on this worker visible to an API process on another host.
+    """
+    from shared import assets
+    if assets.backend_name() == "local":
+        return
+    from state_manager.snapshot import referenced_files
+    from state_manager.state_manager import StateManager
+    state = StateManager().latest(job.project_id)
+    if state is None:
+        return
+    uploaded = assets.publish(referenced_files(state))
+    log.info("published %d asset(s) to %s", len(uploaded), assets.backend_name())
 
 
 def run_once(worker: Optional[str] = None,
@@ -148,7 +176,11 @@ def run_forever(poll_interval: float = 1.0, kinds: Optional[Sequence[str]] = Non
         if job is None:
             stop.wait(poll_interval)
             continue
-        run_job(job)
+        try:
+            run_job(job)
+        except Exception:  # noqa: BLE001 — one bad job must not end the worker
+            log.exception("job %s crashed outside the pipeline", job.id)
+            queue.fail(job.id, "worker error — see the worker log")
     log.info("worker %s stopped", me)
 
 

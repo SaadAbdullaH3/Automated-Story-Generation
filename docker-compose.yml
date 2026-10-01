@@ -1,0 +1,60 @@
+# Production shape: the API, a pool of workers, and Postgres.
+#
+#   docker compose up --build            api + one worker + db
+#   docker compose up --scale worker=3   three renders at once
+#
+# API keys come from .env (same file the CLI uses). Without it everything still
+# runs on the offline providers — template script, placeholder images.
+#
+# The two services share ./data so the worker's output is what the API serves.
+# That works on one host; across hosts the assets need object storage.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: storygen
+      POSTGRES_PASSWORD: storygen
+      POSTGRES_DB: storygen
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The API and worker wait for this, otherwise their first query races
+      # Postgres' own start-up and the container exits.
+      test: ["CMD-SHELL", "pg_isready -U storygen"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://storygen:storygen@db:5432/storygen
+      WORKER_INLINE: "0"        # the worker service does the work
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: ["python", "main.py", "worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://storygen:storygen@db:5432/storygen
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

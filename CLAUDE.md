@@ -47,7 +47,10 @@ python main.py plan "prompt" --scenes 4            # storyboard only (cheap)
 python main.py storyboard|restyle|render <pid>     # review, edit, then render
 python scripts/benchmark.py --offline              # fixed prompts, measured
 python main.py providers                   # which providers are detected
-python main.py serve --reload              # web UI on http://localhost:8000
+python main.py serve --reload              # web UI on http://localhost:8000 (runs a worker too)
+python main.py worker                      # a worker process on its own (WORKER_INLINE=0 for the API)
+python main.py jobs [--status failed]      # the queue: what ran, what broke
+docker compose up --build --scale worker=3 # API + workers + Postgres
 python main.py edit <project_id>           # interactive edit REPL
 python main.py list | history <project_id>
 ```
@@ -72,7 +75,12 @@ Outputs go to `data/outputs/<project_id>/`, version snapshots to
 | Tool layer | `mcp/` | Internal tool registry (**not** the MCP protocol). Tools register on `import mcp.tools`; agents call `ToolExecutor().execute("audio.tts", ...)`. Each tool tries providers in order and falls back. |
 | Model settings | `config/providers.yaml` + `shared/providers.py` | **Which model serves each role** (story, edit_intent, translate, image, tts, music). Agents never name a model: they call `providers.chain(role)` and use the first available, falling through on failure. `concurrency:` per provider drives `shared/utils/parallel.run_jobs`. |
 | LLM client | `mcp/tools/llm_tools/llm_client.py` | `get_llm_client(role)` walks that role's chain: Gemini (google-genai, native JSON schema), Groq / OpenRouter / Ollama / OpenAI (all via the openai client), Anthropic, then `mock` = use the offline fallback. |
-| Backend | `backend/` | FastAPI routes, in-memory run registry, WebSocket progress at `/ws/progress/{pid}`, `/assets` serves `data/outputs`. |
+| Jobs | `jobs/` | **Runs are rows, not closures.** `queue.py` (enqueue/claim/heartbeat/cancel, one atomic UPDATE per claim) and `worker.py` (claims jobs, runs the orchestrator, publishes assets). Cancellation lands between pipeline steps, never mid-ffmpeg. |
+| Database | `shared/db.py` | One database for the version log and the queue. SQLite (WAL) by default, Postgres via `DATABASE_URL`, same SQL through SQLAlchemy Core. |
+| Assets | `shared/assets.py` | The only place a file path becomes a URL. Local disk by default; `STORAGE_URL=s3://bucket` publishes to any S3-compatible bucket (R2) so the worker and the API need not share a filesystem. |
+| Voices | `shared/voices.py` + `backend/routes/voices.py` | Which engines work on this machine and why not, their voices, and a cached one-line sample so a voice can be heard before a render. |
+| Fonts | `shared/fonts.py` | Picks an installed font with the script's glyphs (`Segoe UI` on Windows, Noto in the container). A missing font draws nothing rather than failing. |
+| Backend | `backend/` | FastAPI routes, DB-backed progress (`services/progress.py`), WebSocket at `/ws/progress/{pid}`, `/assets` serves `data/outputs`. |
 | Frontend | `frontend/src/` | Vanilla HTML/CSS/JS, no build step, served by FastAPI. |
 
 ## Conventions
@@ -198,6 +206,48 @@ Saad watched the first live render and reported three things:
   `KOKORO_MODEL` is set; ~2 s per line on this laptop. Voice names are per engine
   (`AudioAgent.voice_for`), so "change voice" picks alternates from the right pool.
 
+## M4 results (2026-10-01)
+
+195/195 tests pass. Production architecture:
+- **Durable jobs.** A run was a `BackgroundTasks` closure plus a module-level
+  dict: a restart orphaned it, nothing outside the process could see it, and it
+  couldn't be stopped. Now the API enqueues and returns in milliseconds, a worker
+  claims the job with a single atomic UPDATE (Postgres `SKIP LOCKED`; on SQLite
+  the `status='queued'` guard makes a second claim match nothing), and progress
+  events are rows, so a reconnecting browser replays what it missed. A worker
+  that stops heartbeating for two minutes has its job requeued, bounded by
+  `max_attempts`. Cancellation is cooperative and lands between steps.
+- **One database, two backends.** `shared/db.py` holds the version log and the
+  queue through SQLalchemy Core: SQLite in WAL mode locally (so the API and the
+  inline worker can both write), Postgres by setting `DATABASE_URL`.
+- **Scales apart.** `main.py serve` still runs a worker thread, so a laptop
+  needs one command; `WORKER_INLINE=0` plus `main.py worker` splits them, and
+  `docker compose up --scale worker=3` runs three renders at once.
+- **Asset URLs in one place.** `shared/assets.py` replaced three hand-built
+  `/assets/...` strings; with `STORAGE_URL` set it publishes to an
+  S3-compatible bucket after a job succeeds.
+- **Choose and hear the voice.** `/api/voices` says which engines work here and
+  why not; `/api/voices/preview` renders a cached one-line sample. The choice
+  rides with the run to the audio agent, and a re-run keeps it. A preview that
+  fell back to another engine says so rather than passing it off.
+- **Portable fonts.** The burned-in subtitle font is resolved against what is
+  installed (`fc-match` where available), because `Segoe UI` does not exist in
+  the Linux image and a missing font silently draws nothing.
+
+Measured live, API and worker as separate processes:
+- A 24 s / 3-scene film with Kokoro voices and burned Urdu subtitles: the POST
+  returned at once, the worker finished in **118.8 s**, and the film is correct
+  (1280x720, Urdu burned in with right-to-left shaping, English soft track).
+- A Kokoro sample for the voice picker rendered in **4.4 s** and is then cached.
+- Cancelling a running job stopped it **16.3 s** later at the next step, left no
+  error event behind, and the worker went straight on to the next job. (That
+  last part needed a fix: `JobCancelled` derives from BaseException, because the
+  orchestrator's `except Exception` was catching a deliberate stop and reporting
+  it to the browser as a failure.)
+- A job queued while the API was **shut down entirely** was still `queued`
+  afterwards and ran to completion when the API came back — the exact case the
+  old in-memory registry lost.
+
 ## Known issues / next milestones
 
 - The Pollinations key has a 0 pollen budget, so the keyed endpoint 402s and the keyless
@@ -207,5 +257,9 @@ Saad watched the first live render and reported three things:
   ~2-3 GB torch install, so they stay optional (deferred again from M3).
 - Storyboard previews are drawn at 512x288 and thrown away at render time; reusing them as
   the wide shot would save one image per scene.
-- Snapshots copy every file per version — storage grows quickly (M4: content-addressed storage).
+- Snapshots copy every file per version — storage grows quickly (content-addressed storage would fix it).
+- The S3/R2 asset backend is wired and unit-tested against a fake client, but
+  has not run against a real bucket (none exists at $0). The Postgres path is
+  likewise exercised only through SQLAlchemy's shared SQL, not a live server.
+- No authentication: every project is visible to anyone who can reach the API.
 - Scene-scoped voice edits apply to that scene only until a later global audio edit re-renders it.

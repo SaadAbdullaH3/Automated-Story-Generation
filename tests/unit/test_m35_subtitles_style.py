@@ -59,7 +59,9 @@ def test_webvtt_format():
 
 
 def test_burned_subtitles_use_a_font_that_has_the_script(tmp_path):
-    """Latin-only fonts drop Urdu glyphs silently."""
+    """Latin-only fonts drop Urdu glyphs silently. Which font has them depends
+    on the machine — Windows has Segoe UI, the container has Noto."""
+    from shared import fonts
     img = tmp_path / "f.png"
     tools = ToolExecutor()
     tools.execute("vision.generate_image", prompt="x", out_path=str(img),
@@ -71,7 +73,8 @@ def test_burned_subtitles_use_a_font_that_has_the_script(tmp_path):
                         lines=[{"start_ms": 0, "end_ms": 1500, "text": "ہیلو"}],
                         language="Urdu")
     assert res.success, res.error
-    assert res.metadata["font"] == "Segoe UI"
+    assert res.metadata["font"] == fonts.font_for("Urdu")
+    assert res.metadata["font"] in fonts.WIDE_SCRIPT_FONTS
 
 
 def test_subtitle_tracks_endpoint(small_project, fake_translation):

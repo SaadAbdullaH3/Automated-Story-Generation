@@ -4,7 +4,6 @@ Starting a run enqueues a job and returns immediately; a worker picks it up.
 The response carries the job id so the caller can follow, cancel or retry it.
 """
 from __future__ import annotations
-from pathlib import PureWindowsPath   # splits on both "\" and "/"
 from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -12,6 +11,7 @@ from pydantic import BaseModel, Field
 
 import jobs
 from shared import voices
+from shared.assets import asset_url
 from shared.languages import iso639_1, supported_names
 from shared.utils.files import project_dir
 from shared.utils.ids import new_project_id
@@ -127,11 +127,9 @@ def get_storyboard(project_id: str):
     if not state or not state.storyboard:
         raise HTTPException(404, f"no storyboard for {project_id}")
     board = state.storyboard.model_dump(mode="json")
-    # Previews are served from /assets/<project_id>/...
     for frame in board["frames"]:
         if frame.get("preview_path"):
-            frame["preview_url"] = (f"/assets/{project_id}/video/storyboard/"
-                                    f"{PureWindowsPath(frame['preview_path']).name}")
+            frame["preview_url"] = asset_url(frame["preview_path"])
     board["stage"] = state.stage
     board["version"] = state.version
     return board
@@ -176,7 +174,7 @@ def subtitle_tracks(project_id: str):
         vtt = project_dir(project_id) / "subtitles" / f"{lang.lower()}.vtt"
         if vtt.exists():
             tracks.append({"language": lang, "code": iso639_1(lang),
-                           "url": f"/assets/{project_id}/subtitles/{vtt.name}",
+                           "url": asset_url(vtt),
                            "burned_in": lang == state.video.burned_subtitle_language})
     return tracks
 

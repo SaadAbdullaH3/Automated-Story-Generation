@@ -184,6 +184,36 @@ def test_cancelling_a_running_job_stops_it_at_the_next_step(isolated_dirs):
     # It stopped early: two events from the pipeline, plus the cancellation.
     phases = [e["phase"] for e in jobs.events_since(job.id, 0)]
     assert phases.count("story") < 5 and phases[-1] == "cancelled"
+    # And it is not reported as a failure on the way out. The orchestrator
+    # wraps the pipeline in `except Exception`, which used to log an error
+    # event first and pop a "Pipeline failed" alert in the browser.
+    assert "error" not in phases
+
+
+def test_a_deliberate_stop_is_not_caught_as_a_pipeline_failure(isolated_dirs):
+    """Agents catch Exception all over the pipeline and carry on; cancellation
+    must pass straight through them."""
+    job = jobs.enqueue("plan", "p1", {"prompt": "x"})
+    claimed = queue.claim("worker-1")
+
+    def swallow_everything(_i):
+        jobs.cancel(job.id)
+
+    class SwallowingOrchestrator(FakeOrchestrator):
+        def plan(self, project_id=None, on_event=None, **payload):
+            try:
+                super().plan(project_id=project_id, on_event=on_event, **payload)
+            except Exception:  # noqa: BLE001 - exactly what the agents do
+                on_event(ProgressEvent(phase="error", status="failed",
+                                       message="swallowed", project_id=project_id))
+
+        run_full = plan
+        render = plan
+        re_run_phase = plan
+
+    orch = SwallowingOrchestrator(events=4, on_each=swallow_everything)
+    assert worker.run_job(claimed, orchestrator=orch) == "cancelled"
+    assert "error" not in [e["phase"] for e in jobs.events_since(job.id, 0)]
 
 
 # ---- the API -----------------------------------------------------------------

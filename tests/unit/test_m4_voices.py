@@ -106,6 +106,19 @@ def test_preview_renders_a_sample_then_serves_it_from_cache(api, monkeypatch):
     assert len(calls) == 1          # rendered once, not twice
 
 
+def test_previews_land_under_the_configured_output_directory(api, monkeypatch,
+                                                             isolated_dirs):
+    """Bound at import, the preview directory ignored the configured root and
+    leaked files into the repository during tests."""
+    from shared import constants
+    _fake_tts(monkeypatch)
+    body = api.post("/api/voices/preview",
+                    json={"engine": "edge", "voice": "en-US-GuyNeural"}).json()
+    written = list((constants.OUTPUTS_DIR / "_voice_previews").glob("edge_*"))
+    assert len(written) == 1
+    assert body["url"].endswith(written[0].name)
+
+
 def test_preview_admits_when_the_engine_fell_back(api, monkeypatch, kokoro_installed):
     """Silently serving an edge-tts sample as 'Kokoro' would make the chooser lie."""
     _fake_tts(monkeypatch, served="edge")

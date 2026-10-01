@@ -1,0 +1,21 @@
+# Keep the build context small and secrets out of the image.
+.git
+.gitignore
+.venv
+.env
+.env.*
+!.env.example
+
+__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+
+# Generated films, snapshots, the database and the voice models — these are
+# runtime state, mounted in, never baked into the image.
+data/
+docs/BENCHMARK*.json
+
+*.md
+!Readme.md

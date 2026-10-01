@@ -12,8 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from mcp.tool_executor import ToolExecutor
-from shared import voices
-from shared.constants import OUTPUTS_DIR
+from shared import assets, constants, voices
 from shared.utils.logging import get_logger
 
 router = APIRouter()
@@ -21,8 +20,13 @@ log = get_logger("api.voices")
 _tools = ToolExecutor()
 
 # Samples are identical for identical inputs, so they are rendered once and
-# kept. They live under the asset root the UI already serves.
-PREVIEW_DIR = OUTPUTS_DIR / "_voice_previews"
+# kept. They live under the asset root the UI already serves. The directory is
+# resolved per call, not at import, so it follows constants.OUTPUTS_DIR.
+PREVIEW_SUBDIR = "_voice_previews"
+
+
+def preview_dir() -> Path:
+    return constants.OUTPUTS_DIR / PREVIEW_SUBDIR
 
 
 class PreviewRequest(BaseModel):
@@ -49,8 +53,9 @@ def preview(req: PreviewRequest):
 
     text = (req.text or voices.SAMPLE_TEXT).strip()
     digest = hashlib.sha1(f"{req.engine}|{req.voice}|{text}".encode()).hexdigest()[:12]
-    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    stem = PREVIEW_DIR / f"{req.engine}_{digest}"
+    directory = preview_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    stem = directory / f"{req.engine}_{digest}"
 
     cached = next((p for p in (stem.with_suffix(".wav"), stem.with_suffix(".mp3"))
                    if p.exists() and p.stat().st_size > 0), None)
@@ -74,4 +79,4 @@ def preview(req: PreviewRequest):
 
 
 def _asset_url(path: Path) -> str:
-    return f"/assets/{PREVIEW_DIR.name}/{path.name}"
+    return assets.asset_url(path) or f"/assets/{PREVIEW_SUBDIR}/{path.name}"

@@ -96,10 +96,16 @@ def enqueue(kind: str, project_id: str, payload: Optional[Dict[str, Any]] = None
 
 # ---- consuming -------------------------------------------------------------
 
-def claim(worker: str, kinds: Optional[Sequence[str]] = None) -> Optional[Job]:
-    """Take the next due job, atomically. Returns None when the queue is empty."""
-    engine = db.get_engine()
-    now = utcnow()
+def claim_statement(worker: str, now: datetime, dialect: str = "sqlite",
+                    kinds: Optional[Sequence[str]] = None):
+    """The one statement that takes a job.
+
+    It is a single UPDATE so that claiming is atomic. On Postgres the inner
+    SELECT skips rows another worker has locked; on SQLite the writer lock
+    serialises them and the `status = 'queued'` guard makes the loser's UPDATE
+    match no rows. Built separately from `claim` so the Postgres SQL can be
+    compiled and checked without a Postgres server.
+    """
     nominee = (
         select(db.jobs.c.id)
         .where(db.jobs.c.status == "queued", db.jobs.c.run_after <= now)
@@ -108,19 +114,25 @@ def claim(worker: str, kinds: Optional[Sequence[str]] = None) -> Optional[Job]:
     )
     if kinds:
         nominee = nominee.where(db.jobs.c.kind.in_(list(kinds)))
-    if engine.dialect.name == "postgresql":
-        # Don't queue up behind a row another worker is already claiming.
+    if dialect == "postgresql":
         nominee = nominee.with_for_update(skip_locked=True)
+    return (
+        db.jobs.update()
+        .where(db.jobs.c.id == nominee.scalar_subquery(),
+               db.jobs.c.status == "queued")
+        .values(status="running", worker=worker, started_at=now,
+                heartbeat_at=now, attempts=db.jobs.c.attempts + 1)
+        .returning(*db.jobs.c)
+    )
 
+
+def claim(worker: str, kinds: Optional[Sequence[str]] = None) -> Optional[Job]:
+    """Take the next due job, atomically. Returns None when the queue is empty."""
+    engine = db.get_engine()
+    now = utcnow()
+    statement = claim_statement(worker, now, engine.dialect.name, kinds)
     with engine.begin() as c:
-        row = c.execute(
-            db.jobs.update()
-            .where(db.jobs.c.id == nominee.scalar_subquery(),
-                   db.jobs.c.status == "queued")
-            .values(status="running", worker=worker, started_at=now,
-                    heartbeat_at=now, attempts=db.jobs.c.attempts + 1)
-            .returning(*db.jobs.c)
-        ).mappings().first()
+        row = c.execute(statement).mappings().first()
     return Job.from_row(row) if row else None
 
 

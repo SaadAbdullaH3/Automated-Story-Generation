@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 from mcp.base_tool import BaseTool, ToolResult
-from shared.languages import WIDE_SCRIPT_LANGUAGES, canonical, iso639_2
+from shared.fonts import font_for
+from shared.languages import iso639_2
 
 
 def _ms_to_srt_ts(ms: int) -> str:
@@ -34,8 +35,9 @@ class SubtitleTool(BaseTool):
         # MarginV=40 keeps lines off the very edge.
         # WrapStyle=2 = no automatic line breaks unless we add \N (forces single line then wraps to 2).
         # Latin-only fonts drop Urdu/Hindi/CJK glyphs silently, so pick a font
-        # with the right coverage. libass handles right-to-left shaping itself.
-        font = "Segoe UI" if canonical(language) in WIDE_SCRIPT_LANGUAGES else "Arial"
+        # with the right coverage that this machine actually has (the container
+        # has no "Segoe UI"). libass handles right-to-left shaping itself.
+        font = font_for(language)
         vf = (f"subtitles=filename='{srt_arg}':"
               f"force_style='FontName={font},FontSize={font_size},"
               f"PrimaryColour=&Hffffff&,OutlineColour=&H000000&,BackColour=&H80000000&,"
