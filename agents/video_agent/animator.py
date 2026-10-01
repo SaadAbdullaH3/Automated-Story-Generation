@@ -21,22 +21,30 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
+from shared.utils.logging import get_logger
 
-# Distinct motion patterns that look good on a still image.
-# IMPORTANT: pan presets (`pan_left_subtle`, `pan_right_subtle`) were removed
-# because ffmpeg's `zoompan` filter operates on integer pixel coordinates —
-# fractional motion like `x+0.6` per frame rounds inconsistently, producing
-# visible micro-shake especially on detail-rich landscape shots. We keep only
-# centered zooms + the locked `static_hold`, which are pixel-stable.
-MOTION_PRESETS = [
-    "slow_zoom_in",
-    "slow_zoom_out",
-    "static_hold",
-    "very_slow_zoom_in",
-    "static_hold",         # weighted: half of all shots are locked
-    "slow_zoom_in",
-    "very_slow_zoom_in",
-]
+from . import camera
+
+log = get_logger("animator")
+
+
+# Camera moves live in camera.py now. Pans were once removed from this list
+# because zoompan's integer crop position made them shiver; camera.py computes
+# the move at 3x the output size and scales down, which puts the wobble below
+# a third of a pixel. The old names still resolve, so existing states render.
+MOTION_PRESETS = list(camera.MOVES)
+
+# What the old preset names mean in terms of camera moves.
+LEGACY_MOTIONS = {
+    "very_slow_zoom_in": "push_in",
+    "slow_zoom_in": "push_in",
+    "slow_zoom_out": "pull_out",
+    "static_breathing": "static_hold",
+    "pan_left_subtle": "pan_left",
+    "pan_right_subtle": "pan_right",
+    "ken_burns_diag": "drift",
+    "ken_burns_diag_rev": "drift",
+}
 
 
 @dataclass
@@ -44,10 +52,13 @@ class Shot:
     """A single sub-clip inside a scene."""
     image_path: str
     duration_ms: int
-    motion: str = "ken_burns_diag"
+    motion: str = "drift"
     audio_path: Optional[str] = None       # if set, gets muxed in (used for lip sync)
     is_lip_sync: bool = False              # if True, image_path is already a video
     frames: int = 0                        # exact frame count; 0 = derive from duration_ms
+    # Phase 1 decided the film's look; the grade follows it rather than a default.
+    visual_style: str = ""
+    tone: str = ""
 
 
 def probe_duration_ms(path: str | Path) -> Optional[int]:
@@ -63,7 +74,8 @@ def probe_duration_ms(path: str | Path) -> Optional[int]:
 
 
 def render_shot(shot: Shot, out_path: Path, width: int, height: int, fps: int,
-                add_grain: bool = True, add_vignette: bool = True) -> Path:
+                add_grain: bool = True, add_vignette: bool = True,
+                letterbox: bool = False) -> Path:
     """Render a single shot (still image -> mp4) with cinematic motion.
 
     The clip is exactly `shot.frames` frames long (or duration_ms at `fps`),
@@ -81,29 +93,14 @@ def render_shot(shot: Shot, out_path: Path, width: int, height: int, fps: int,
                                 frames=frames, audio_path=shot.audio_path,
                                 add_grain=add_grain, add_vignette=add_vignette)
 
-    motion_filter = _motion_filter_for(shot.motion, frames, width, height, fps)
-
-    # Cinematic post-chain: subtle vignette + (static) grain + colour grading.
-    # IMPORTANT: we use SPATIAL grain only (no `t` flag) — temporal grain
-    # generates fresh noise every frame, which the eye reads as visible
-    # shimmer / vibration across the whole image. A single static noise
-    # pattern still gives a film feel without the shake.
-    post = []
-    if add_vignette:
-        post.append("vignette=PI/5")
-    if add_grain:
-        # `alls=2` (low strength) + `allf=u` (uniform spatial only, no `t`).
-        post.append("noise=alls=2:allf=u")
-    # Colour grading: very mild S-curve.
-    post.append("eq=contrast=1.04:saturation=1.06")
-    post.append("format=yuv420p")
-    post_chain = "," + ",".join(post)
-
+    move = LEGACY_MOTIONS.get(shot.motion, shot.motion)
+    # camera.motion_filter is the whole chain: scale up, move, scale back down.
     vf = (
-        f"scale=w={int(width*1.6)}:h={int(height*1.6)}:force_original_aspect_ratio=increase,"
-        f"crop={int(width*1.6)}:{int(height*1.6)},"
-        f"{motion_filter}"
-        f"{post_chain}"
+        camera.motion_filter(move, frames, width, height, fps)
+        + ","
+        + camera.post_chain(shot.visual_style, shot.tone, add_grain=add_grain,
+                            add_vignette=add_vignette, letterbox=letterbox,
+                            width=width, height=height)
     )
 
     has_audio = bool(shot.audio_path and Path(shot.audio_path).exists())
@@ -122,7 +119,23 @@ def render_shot(shot: Shot, out_path: Path, width: int, height: int, fps: int,
     else:
         cmd += ["-an"]
     cmd.append(str(out_path))
-    subprocess.run(cmd, check=True, capture_output=True)
+    proc = subprocess.run(cmd, capture_output=True)
+    if proc.returncode != 0:
+        # Computing the move at several times the output size is what keeps a
+        # pan smooth, but it is also the one memory-hungry part of a render.
+        # Rather than lose the whole film, redo this shot at output size and
+        # say so — a slightly steppier shot beats no shot.
+        log.warning("shot %s failed at %.1fx supersampling (%s) — retrying at 1x",
+                    out_path.stem, camera.supersample_for(width, height),
+                    (proc.stderr or b"").decode("utf-8", "replace").strip()[-200:])
+        vf_plain = (
+            camera.motion_filter(move, frames, width, height, fps, factor=1.0)
+            + "," + camera.post_chain(shot.visual_style, shot.tone,
+                                      add_grain=add_grain, add_vignette=add_vignette,
+                                      letterbox=letterbox, width=width, height=height)
+        )
+        cmd[cmd.index("-vf") + 1] = vf_plain
+        subprocess.run(cmd, check=True, capture_output=True)
     return out_path
 
 
@@ -186,33 +199,6 @@ def assemble_scene(shots: List[Path], out_path: Path,
 
 # ---- internals --------------------------------------------------------------
 
-def _motion_filter_for(motion: str, frames: int, w: int, h: int, fps: int = 24) -> str:
-    """Return a `zoompan=...` filter string for the requested motion.
-
-    `fps` is passed to zoompan so it emits frames at the project rate
-    (its default is 25, which would then be resampled and judder).
-    """
-    f = max(1, frames)
-    tail = f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={w}x{h}:fps={fps}"
-    # All motions are CENTERED zoom only — no pans, no diagonal drift.
-    # We keep zoom rates very low (≤ 0.0005 per frame) so any residual
-    # pixel-rounding is invisible to the eye.
-    if motion == "very_slow_zoom_in":
-        # Barely-perceptible zoom: 1.00 -> ~1.06 over the whole shot.
-        return f"zoompan=z='min(zoom+0.0003,1.10)':d={f}:{tail}"
-    if motion == "slow_zoom_in":
-        return f"zoompan=z='min(zoom+0.0005,1.18)':d={f}:{tail}"
-    if motion == "slow_zoom_out":
-        return f"zoompan=z='if(eq(on,0),1.18,max(zoom-0.0005,1.0))':d={f}:{tail}"
-    if motion in ("static_hold", "static_breathing",
-                  "pan_left_subtle", "pan_right_subtle",
-                  "ken_burns_diag", "ken_burns_diag_rev"):
-        # Pan / ken-burns presets now collapse to a stable centered hold.
-        return f"zoompan=z=1.10:d={f}:{tail}"
-    # default — gentle centered zoom in.
-    return f"zoompan=z='min(zoom+0.0003,1.10)':d={f}:{tail}"
-
-
 def _normalize_video(in_path: str, out_path: Path, width: int, height: int,
                      fps: int, frames: int,
                      audio_path: Optional[str] = None,
@@ -266,7 +252,12 @@ def _has_audio(path: str | Path) -> bool:
         return False
 
 
-def pick_motion_for_index(scene_idx: int, shot_idx: int) -> str:
-    """Deterministic motion picker — alternates so adjacent shots feel different."""
-    n = len(MOTION_PRESETS)
-    return MOTION_PRESETS[(scene_idx * 3 + shot_idx) % n]
+def pick_motion_for_index(scene_idx: int, shot_idx: int,
+                          shot_kind: str = "", tone: str = "") -> str:
+    """Pick the camera move for a shot.
+
+    It used to be a round-robin over a fixed list, so the move had nothing to
+    do with what was on screen. Now the shot's job and the scene's tone choose
+    it, and the index only breaks ties between adjacent shots.
+    """
+    return camera.move_for(shot_kind, tone, scene_idx + shot_idx)

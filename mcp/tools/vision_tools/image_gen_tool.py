@@ -9,12 +9,13 @@ never end up on screen as a picture.
 from __future__ import annotations
 import base64
 import hashlib
+import threading
 import os
 import time
 import urllib.parse
 from io import BytesIO
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 from mcp.base_tool import BaseTool, ToolResult
 from shared import providers
@@ -27,6 +28,26 @@ log = get_logger("image_gen")
 # per process (the model is ~7 GB; loading it 18 times per pipeline run
 # would be unworkable).
 _DIFFUSERS_PIPE = None
+
+# How many calls each provider will take at once, enforced here rather than by
+# the size of the caller's thread pool. The pool is sized from the *preferred*
+# provider's concurrency, so when that one starts failing and the chain falls
+# through to an endpoint that only tolerates one request at a time, every
+# worker arrives at once and they all get 429s — which is how a run ends up
+# full of placeholder images.
+_PROVIDER_LIMITS: Dict[str, "threading.Semaphore"] = {}
+_LIMITS_LOCK = threading.Lock()
+
+
+def _limiter(provider: str, concurrency: int) -> "threading.Semaphore":
+    cap = max(1, int(concurrency or 1))
+    with _LIMITS_LOCK:
+        existing = _PROVIDER_LIMITS.get(provider)
+        if existing is None or getattr(existing, "cap", None) != cap:
+            existing = threading.Semaphore(cap)
+            existing.cap = cap          # so a config change resizes it
+            _PROVIDER_LIMITS[provider] = existing
+        return existing
 
 
 class ImageGenTool(BaseTool):
@@ -54,8 +75,9 @@ class ImageGenTool(BaseTool):
             # Free endpoints hiccup (429s, 500s); retry before giving up on them.
             for attempt in range(spec.retries):
                 try:
-                    meta = handler(spec, full_prompt, negative_prompt, out,
-                                   width, height, seed) or {}
+                    with _limiter(spec.provider, spec.concurrency):
+                        meta = handler(spec, full_prompt, negative_prompt, out,
+                                       width, height, seed) or {}
                     return ToolResult(success=True, data=str(out),
                                       metadata={"provider": spec.provider, "model": spec.model,
                                                 "seed": seed, "attempt": attempt + 1, **meta})
@@ -213,8 +235,16 @@ class ImageGenTool(BaseTool):
                        "Pollinations legacy endpoint served model %r at %dx%d instead of %r "
                        "at %dx%d. Set POLLINATIONS_API_KEY (free at enter.pollinations.ai) "
                        "for the requested model.", served, native[0], native[1], model, w, h)
-        return {"endpoint": endpoint, "requested_model": model,
+        meta = {"endpoint": endpoint, "requested_model": model,
                 "served_model": served or model, "native_size": list(native)}
+        # A keyed account has a pollen balance. Surface whatever the response
+        # says about it, so a run reports what it spent instead of the budget
+        # quietly running out mid-film.
+        balance = _pollen_balance(r.headers)
+        if balance is not None:
+            meta["pollen_balance"] = balance
+            log.info("pollinations: %s pollens left", balance)
+        return meta
 
     def _provider_cloudflare(self, spec: ProviderSpec, prompt: str, negative: str, out: Path,
                              w: int, h: int, seed: int) -> dict:
@@ -352,6 +382,23 @@ class ImageGenTool(BaseTool):
 
 # ---- helpers ------------------------------------------------------------
 
+def write_placeholder(prompt: str, out_path: str | Path, width: int = 1280,
+                      height: int = 720, seed: int = 0) -> Path:
+    """Draw the offline placeholder at `out_path`, whatever the chain contains.
+
+    `placeholder` is normally last in the image chain, but forcing a single
+    provider (PROVIDER_IMAGE=...) removes it — and then a provider outage
+    leaves no file at all, which only surfaces much later as ffmpeg failing to
+    open its input.
+    """
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    spec = ProviderSpec(role="image", provider="placeholder")
+    ImageGenTool()._provider_placeholder(spec, prompt, "", out, width, height,
+                                         seed or 1)
+    return out
+
+
 _WARNED: set = set()
 # Set once a keyed Pollinations call is refused, so we stop retrying with the key.
 _KEYLESS_POLLINATIONS: set = set()
@@ -369,6 +416,16 @@ def _is_permanent(error: Exception) -> bool:
     text = str(error).lower()
     return any(code in text for code in ("401", "403", "unauthorized", "forbidden",
                                          "invalid api key", "400"))
+
+
+def _pollen_balance(headers) -> Optional[str]:
+    """Whatever the response says about the account's remaining credit."""
+    for name in ("x-pollen-balance", "x-pollens-remaining", "x-credits-remaining",
+                 "x-ratelimit-remaining", "x-balance"):
+        value = headers.get(name)
+        if value:
+            return value
+    return None
 
 
 def _warn_once(key: str, msg: str, *args) -> None:

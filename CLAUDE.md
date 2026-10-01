@@ -71,6 +71,7 @@ Outputs go to `data/outputs/<project_id>/`, version snapshots to
 | Storyboard | `shared/schemas/storyboard.py` + orchestrator `plan`/`update_storyboard`/`render` | The cheap draft (script + one preview image per scene) that is reviewed and edited before the expensive render. `PipelineState.stage` is draft → storyboard → rendered. |
 | Timeline | `shared/timeline.py` | **Single source of truth for timing.** Audio places lines on it, video cuts on its boundaries (absolute ms → frames), subtitles read it. Never time video or audio independently. |
 | Phase 2 | `agents/audio_agent/` | `render_line` (TTS) → `retime` (timeline) → `remix` (per-scene BGM + master with lines placed at `start_ms`). Edits reuse these. |
+| Camera | `agents/video_agent/camera.py` | Camera moves and the grade over them. The move is computed at 3x the output size and scaled down, which is what makes pans smooth enough to use; `move_for` picks it from the shot's job and the scene's tone, `grade_for` from the story's own `visual_style`. |
 | Phase 3 | `agents/video_agent/` | `run`: portraits + 3-image shot bank per scene. `compose`: plan shots from the timeline → render changed scenes only (`plan_signature`) → scene crossfades → master mux → speed → soft-sub tracks. Edits call `compose`. |
 | Phase 5 | `agents/edit_agent/` | `intent_classifier.py` (LLM or regex; matches character names) → `planner.py` (steps) → `executor.py` (reuses Phase 2/3 primitives) → snapshot. |
 | Versioning | `state_manager/` | Append-only SQLite log + asset copies per version; `referenced_files(state)` collects every file the state points to. Revert creates a new version. |
@@ -320,10 +321,69 @@ Verified in a browser: first-run setup screen, sign-in, the voice preview
 working through an authenticated session, sign-out returning to the gate. With
 no session, `/api/projects/` and a real film's `/assets/...` URL both answer 401.
 
+## M6 results (2026-10-01)
+
+272/272 tests pass, 39 of them new. Premium video, at $0.
+
+- **Pans work again.** They had been removed with a comment explaining that
+  `zoompan` positions its crop window at integer pixels, so a sub-pixel move
+  per frame rounds unevenly and the picture shivers. That was true, so it was
+  measured rather than argued with — per-frame shift by phase correlation,
+  against a 0.000 px floor on a locked-off shot:
+
+      supersample   std dev   worst jump   render (3 s shot)
+      1.6x (old)    0.494 px    0.631 px        1.1 s
+      3x (now)      0.312 px    0.397 px        2.8 s
+      4x            0.242 px    0.365 px        5.1 s
+
+  The move is computed at 3x and scaled down with lanczos, turning a
+  whole-pixel error upstream into a fraction of an output pixel. On real shot
+  clips from a finished film the new shots travel **up to 5.13 px/frame** — an
+  actual pan — while wobbling *less* than the old centred zooms managed at
+  0.62 px/frame: worst jump **0.19 px against 0.80 px**.
+- **The move means something.** `camera.move_for` picks from the shot's job and
+  the scene's tone — tense close-up pushes in, establishing wide pulls back, a
+  face delivering a line is locked off — instead of a round-robin over a list.
+  The grade follows the story's own `visual_style` (noir, teal-orange, cold,
+  warm, bleach) rather than one fixed mild S-curve.
+- **A real render found the two modules spoke different tone vocabularies**, so
+  "melancholic" and "joyful" both fell through to a generic move. A test now
+  asserts every tone `visual_style.TONE_HINTS` can emit has camera moves, and a
+  synonym table catches what a writing model invents.
+- **Real motion is a provider chain** (`video` and `lipsync` roles) instead of
+  an `if os.getenv(...)` ladder inside the agent — which is what the provider
+  layer exists to replace. Free providers come first on purpose: a per-clip
+  charge does not get to be the default just because it is better. **Veo 3.1**
+  is reachable (the Gemini key already present can call it) but is billed per
+  second and outside the free tier, so it sits below the free options and
+  needs `VIDEO_BUDGET_OK` as well as the key. **Saad ruled it out on cost;
+  it has never been called.**
+
+Three robustness fixes found while verifying:
+- The worker pool is sized from the *preferred* provider's concurrency, so when
+  that one started failing and the chain fell through to an endpoint that takes
+  one request at a time, every worker arrived at once and the run came back
+  full of placeholders. Each provider now has its own semaphore.
+- When every image provider failed, the agent recorded the path it had meant to
+  write; the missing file surfaced much later as ffmpeg failing to open its
+  input. `_ensure_image` now guarantees a placeholder exists.
+- A shot that cannot be supersampled is re-rendered at output size with a
+  warning rather than losing the film, and the supersampled frame is capped at
+  8.5 MP so a 1080p project cannot exhaust memory.
+
 ## Known issues / next milestones
 
-- The Pollinations key has a 0 pollen budget, so the keyed endpoint 402s and the keyless
-  (weaker `sana`, ~1024x576) one serves as the backup behind Cloudflare.
+- The Pollinations key now has a small pollen budget, so the keyed endpoint
+  serves the requested model at full size. The keyless endpoint it falls back
+  to when the budget runs out 402s intermittently and returns a weaker model
+  (`sana`, ~1024x576), so a run can degrade mid-film without failing.
+- All three free image providers can be exhausted at once — Cloudflare's 10,000
+  neurons/day, Pollinations keyed and keyless — and then a render completes
+  with placeholder images rather than failing. That is the designed behaviour,
+  but it does mean a demo render has to wait for the daily reset.
+- No real-motion provider has been exercised end to end: every one costs money
+  per clip. The chain, the Veo adapter and the fallback to camera moves are
+  unit-tested; the network call is not.
 - Cloudflare's safety filter occasionally rejects an innocuous scene prompt as NSFW.
 - Voices are still edge-tts only; Kokoro / Chatterbox voices and ACE-Step music need a
   ~2-3 GB torch install, so they stay optional (deferred again from M3).

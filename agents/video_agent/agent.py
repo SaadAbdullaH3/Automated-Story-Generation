@@ -52,6 +52,22 @@ from .animator import (
     Shot as RenderShot, assemble_scene, pick_motion_for_index, render_shot,
 )
 
+
+def premium_motion_available() -> bool:
+    """True when a real image-to-video provider is configured and usable."""
+    spec = providers.active("video")
+    return bool(spec and spec.provider != "ffmpeg")
+
+
+def premium_lipsync_available() -> bool:
+    spec = providers.active("lipsync")
+    return bool(spec and spec.provider != "none")
+
+
+def motion_provider() -> str:
+    spec = providers.active("video")
+    return spec.provider if spec else "ffmpeg"
+
 log = get_logger("video_agent")
 
 MAX_SHOT_MS = 4500   # longest a single still stays on screen before a cut
@@ -101,17 +117,13 @@ class VideoAgent:
         state.phase3.status = "running"
         state.phase3.started_at = datetime.utcnow().isoformat()
 
-        # Auto-detect upgrades from env if caller didn't specify.
+        # Which tier serves this run comes from config/providers.yaml, like
+        # every other model choice. An `if os.getenv(...)` chain in here was
+        # exactly what the provider layer exists to replace.
         if use_text_to_video is None:
-            use_text_to_video = bool(
-                os.getenv("FAL_KEY") or os.getenv("FAL_API_KEY") or
-                os.getenv("REPLICATE_API_TOKEN") or os.getenv("HF_TOKEN")
-            )
+            use_text_to_video = premium_motion_available()
         if use_lip_sync is None:
-            use_lip_sync = bool(
-                os.getenv("FAL_KEY") or os.getenv("FAL_API_KEY") or
-                os.getenv("REPLICATE_API_TOKEN")
-            )
+            use_lip_sync = premium_lipsync_available()
 
         try:
             # Portraits and every scene's shot bank are independent: generate them
@@ -263,7 +275,8 @@ class VideoAgent:
         )
         log.info("  portrait: %s -> %s (%s)", c.name, out.name,
                  res.metadata.get("provider") if res.success else res.error)
-        return CharacterPortrait(character_id=c.id, image_path=res.data if res.success else str(out))
+        return CharacterPortrait(character_id=c.id,
+                                 image_path=_ensure_image(res, out, prompt, width, height))
 
     def generate_storyboard(self, state: PipelineState, width: int = 512, height: int = 288,
                             scene_ids: Optional[List[str]] = None) -> Storyboard:
@@ -326,7 +339,7 @@ class VideoAgent:
         )
         log.info("  storyboard %s -> %s (%s)", scene.scene_id, out.name,
                  res.metadata.get("provider") if res.success else res.error)
-        return res.data if res.success else str(out)
+        return _ensure_image(res, out, prompt, width, height)
 
     def generate_shot_bank(self, project_id: str, scene: Scene, width: int, height: int,
                            seed_salt: str = "", story: Optional[StoryOutput] = None
@@ -344,7 +357,7 @@ class VideoAgent:
                 width=width, height=height, style=style,
                 negative_prompt=negative, seed=_seed(prompt, seed_salt),
             )
-            bank.append(res.data if res.success else str(out))
+            bank.append(_ensure_image(res, out, prompt, width, height))
             log.info("  scene %s %s shot -> %s (%s)", scene.scene_id, tag, out.name,
                      res.metadata.get("provider") if res.success else res.error)
         return bank
@@ -444,7 +457,9 @@ class VideoAgent:
                     source=span["sources"][j % len(span["sources"])],
                     start_ms=a, end_ms=b, nominal_frames=nominal, render_frames=nominal,
                     motion="lip_sync" if span["kind"] == "lip_sync"
-                    else pick_motion_for_index(scene.index, len(planned)),
+                    else pick_motion_for_index(scene.index, len(planned),
+                                               shot_kind=span["kind"],
+                                               tone=getattr(scene, "tone", "") or ""),
                     character_id=span.get("char"),
                     audio_path=span.get("audio") if j == 0 else None,
                     is_video=bool(span.get("video")),
@@ -516,10 +531,17 @@ class VideoAgent:
         shot_dir.mkdir(parents=True, exist_ok=True)
         scene_dir.mkdir(parents=True, exist_ok=True)
 
+        story = state.script.story if state.script else None
+        visual_style = getattr(story, "visual_style", "") or ""
+        scene_obj = next((sc for sc in (state.script.scenes if state.script else [])
+                          if sc.scene_id == scene_id), None)
+        scene_tone = getattr(scene_obj, "tone", "") or ""
+
         paths: List[Path] = []
         for p in planned:
             rs = RenderShot(image_path=p.source, duration_ms=p.end_ms - p.start_ms,
-                            motion=p.motion, frames=p.render_frames, is_lip_sync=p.is_video)
+                            motion=p.motion, frames=p.render_frames, is_lip_sync=p.is_video,
+                            visual_style=visual_style, tone=scene_tone)
             paths.append(render_shot(rs, shot_dir / f"{p.shot_id}.mp4",
                                      video.width, video.height, video.fps,
                                      add_grain=video.cinematic_post,
@@ -707,6 +729,23 @@ class VideoAgent:
             elif lang not in out:
                 out.append(lang)
         return out
+
+
+def _ensure_image(res, out, prompt: str, width: int, height: int) -> str:
+    """Return a path that definitely has an image behind it.
+
+    Every provider can fail at once — free image endpoints run out of quota on
+    the same day — and the agent used to record the path it had intended to
+    write. The missing file then surfaced much later, as ffmpeg failing to
+    open its input half way through a render.
+    """
+    if res.success and res.data and Path(res.data).exists():
+        return res.data
+    if not Path(out).exists():
+        from mcp.tools.vision_tools.image_gen_tool import write_placeholder
+        log.warning("  no image was produced for %s — drawing a placeholder", Path(out).name)
+        write_placeholder(prompt, out, width, height)
+    return str(out)
 
 
 def _seed(prompt: str, salt: str = "") -> int:

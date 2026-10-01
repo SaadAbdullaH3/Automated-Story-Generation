@@ -80,16 +80,19 @@ def test_lip_sync_heuristic_creates_clip(tmp_path):
 
 
 def test_text_to_video_returns_failure_without_keys(tmp_path, monkeypatch):
-    """Without any provider key, t2v politely fails (caller falls back)."""
+    """Without any provider key, real motion politely fails and the caller
+    falls back to the offline camera moves."""
     for key in ("FAL_KEY", "FAL_API_KEY", "REPLICATE_API_TOKEN",
-                "HF_TOKEN", "HUGGINGFACE_API_KEY"):
+                "HF_TOKEN", "HUGGINGFACE_API_KEY", "VIDEO_BUDGET_OK"):
         monkeypatch.delenv(key, raising=False)
     res = ToolExecutor().execute(
         "vision.text_to_video", prompt="ocean waves",
         out_path=str(tmp_path / "t2v.mp4"),
     )
     assert res.success is False
-    assert "no text-to-video provider" in (res.error or "").lower()
+    # Since M6 the message points at the chain that decides this.
+    assert "no real-motion provider" in (res.error or "").lower()
+    assert "providers.yaml" in (res.error or "")
 
 
 def test_video_agent_v2_produces_multishot_composition(tmp_path, monkeypatch):
