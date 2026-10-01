@@ -36,7 +36,8 @@ from shared.constants import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH, PHASE_V
 from shared.languages import canonical
 from shared.schemas.audio import AudioSegment, SceneTiming
 from shared.schemas.pipeline import PipelineState
-from shared.schemas.story import Character, Scene
+from agents.story_agent.visual_style import portrait_style, scene_style
+from shared.schemas.story import Character, Scene, StoryOutput
 from shared.schemas.storyboard import Storyboard, StoryboardFrame, StoryboardLine
 from shared.schemas.video import CharacterPortrait, SceneFrame, Shot, VideoOutput
 from shared.timeline import (
@@ -55,15 +56,6 @@ log = get_logger("video_agent")
 
 MAX_SHOT_MS = 4500   # longest a single still stays on screen before a cut
 MIN_SHOT_MS = 1500   # shortest cut we'll create when splitting a long span
-
-ANIME_STYLE = ("anime, studio ghibli style, cel-shaded, vibrant saturated colors, "
-               "clean detailed line art, soft cinematic lighting")
-SCENE_STYLE = ANIME_STYLE + ", painterly background, masterpiece, high quality, ultra detailed"
-PORTRAIT_STYLE = ANIME_STYLE + ", masterpiece, high quality"
-SCENE_NEGATIVE = ("blurry, low quality, jpeg artifacts, photograph, photorealistic, "
-                  "3d render, text, watermark, signature, deformed")
-PORTRAIT_NEGATIVE = ("blurry, low quality, jpeg artifacts, deformed, extra limbs, mutated, "
-                     "ugly, photograph, photorealistic, 3d render, text, watermark, signature")
 
 # Three deliberately different framings of the same scene so cuts feel meaningful.
 BANK_FRAMINGS = [
@@ -100,7 +92,8 @@ class VideoAgent:
             fps: int = DEFAULT_FPS,
             use_text_to_video: Optional[bool] = None,
             use_lip_sync: Optional[bool] = None,
-            cinematic_post: bool = True) -> VideoOutput:
+            cinematic_post: bool = True,
+            burn_subtitles: bool = True) -> VideoOutput:
         if not state.script:
             raise ValueError("phase 3 requires state.script (run phase 1 first)")
         log.info("phase 3 start (project=%s, %dx%d@%d, subs=%s, lang=%s)",
@@ -124,13 +117,15 @@ class VideoAgent:
             # Portraits and every scene's shot bank are independent: generate them
             # as concurrently as the active image provider allows.
             portraits = run_jobs(
-                [(self.generate_portrait, (state.project_id, c, width, height))
+                [(self.generate_portrait, (state.project_id, c, width, height, "",
+                                           state.script.story))
                  for c in state.script.characters.characters],
                 workers=providers.concurrency("image"), label="portraits",
             )
             frames = run_jobs(
                 [(self._generate_scene_frame,
-                  (state.project_id, scene, width, height, fps, use_text_to_video))
+                  (state.project_id, scene, width, height, fps, use_text_to_video,
+                   state.script.story))
                  for scene in state.script.scenes],
                 workers=providers.concurrency("image"), label="scene images",
             )
@@ -150,6 +145,7 @@ class VideoAgent:
                 used_lip_sync=use_lip_sync,
                 cinematic_post=cinematic_post,
                 subtitle_language=lang or "English",
+                burn_subtitles=burn_subtitles,
             )
             final_video = self.compose(state)
 
@@ -249,23 +245,21 @@ class VideoAgent:
     # ---- assets ----------------------------------------------------------
 
     def generate_portrait(self, project_id: str, c: Character, width: int, height: int,
-                          seed_salt: str = "") -> CharacterPortrait:
-        """(Re)generate one character's close-up portrait."""
+                          seed_salt: str = "", story: Optional[StoryOutput] = None
+                          ) -> CharacterPortrait:
+        """(Re)generate one character's close-up portrait, in the film's style."""
         out = project_dir(project_id) / "video" / "portraits" / f"{c.id}.png"
         out.parent.mkdir(parents=True, exist_ok=True)
         # The appearance lock (not the raw description) keeps the face stable.
         look = c.appearance_lock or build_appearance_lock(c)
-        prompt = (
-            f"anime style close-up portrait of {look}, "
-            f"{c.role}, expressive face, large detailed eyes, looking at camera, "
-            f"vibrant colors, cel-shaded, clean line art, soft anime lighting"
-        )
+        style, negative = portrait_style(story)
+        prompt = f"close-up portrait of {look}, {c.role}"
         seed = character_seed(c, seed_salt) if seed_salt else (
             c.image_seed if c.image_seed is not None else character_seed(c))
         res = self.tools.execute(
             "vision.generate_image", prompt=prompt, out_path=str(out),
-            width=width, height=height, style=PORTRAIT_STYLE,
-            negative_prompt=PORTRAIT_NEGATIVE, seed=seed,
+            width=width, height=height, style=style,
+            negative_prompt=negative, seed=seed,
         )
         log.info("  portrait: %s -> %s (%s)", c.name, out.name,
                  res.metadata.get("provider") if res.success else res.error)
@@ -290,7 +284,7 @@ class VideoAgent:
         targets = [s for s in script.scenes
                    if scene_ids is None or s.scene_id in scene_ids]
         previews = run_jobs(
-            [(self._generate_preview, (state.project_id, scene, width, height))
+            [(self._generate_preview, (state.project_id, scene, width, height, script.story))
              for scene in targets],
             workers=providers.concurrency("image"), label="storyboard previews",
         )
@@ -318,14 +312,15 @@ class VideoAgent:
         return board
 
     def _generate_preview(self, project_id: str, scene: Scene,
-                          width: int, height: int) -> str:
+                          width: int, height: int, story: StoryOutput) -> str:
         out = project_dir(project_id) / "video" / "storyboard" / f"{scene.scene_id}.png"
         out.parent.mkdir(parents=True, exist_ok=True)
-        prompt = f"anime scene of {scene.visual_prompt}, {BANK_FRAMINGS[0][1]}"
+        style, negative = scene_style(story, scene.tone)
+        prompt = f"{scene.visual_prompt}, {BANK_FRAMINGS[0][1]}"
         res = self.tools.execute(
             "vision.generate_image", prompt=prompt, out_path=str(out),
-            width=width, height=height, style=SCENE_STYLE,
-            negative_prompt=SCENE_NEGATIVE,
+            width=width, height=height, style=style,
+            negative_prompt=negative,
             # A new prompt gives a new preview; the same prompt reuses the look.
             seed=_seed(prompt, ""),
         )
@@ -334,18 +329,20 @@ class VideoAgent:
         return res.data if res.success else str(out)
 
     def generate_shot_bank(self, project_id: str, scene: Scene, width: int, height: int,
-                           seed_salt: str = "") -> List[str]:
-        """(Re)generate a scene's wide / detail / alt images. Returns their paths."""
+                           seed_salt: str = "", story: Optional[StoryOutput] = None
+                           ) -> List[str]:
+        """(Re)generate a scene's wide / detail / alt images, in the film's style."""
         img_dir = project_dir(project_id) / "video" / "frames"
         img_dir.mkdir(parents=True, exist_ok=True)
+        style, negative = scene_style(story, scene.tone)
         bank: List[str] = []
         for tag, suffix in BANK_FRAMINGS:
             out = img_dir / f"{scene.scene_id}_{tag}.png"
-            prompt = f"anime scene of {scene.visual_prompt}, {suffix}"
+            prompt = f"{scene.visual_prompt}, {suffix}"
             res = self.tools.execute(
                 "vision.generate_image", prompt=prompt, out_path=str(out),
-                width=width, height=height, style=SCENE_STYLE,
-                negative_prompt=SCENE_NEGATIVE, seed=_seed(prompt, seed_salt),
+                width=width, height=height, style=style,
+                negative_prompt=negative, seed=_seed(prompt, seed_salt),
             )
             bank.append(res.data if res.success else str(out))
             log.info("  scene %s %s shot -> %s (%s)", scene.scene_id, tag, out.name,
@@ -353,8 +350,9 @@ class VideoAgent:
         return bank
 
     def _generate_scene_frame(self, project_id: str, scene: Scene, width: int, height: int,
-                              fps: int, use_text_to_video: bool) -> SceneFrame:
-        bank = self.generate_shot_bank(project_id, scene, width, height)
+                              fps: int, use_text_to_video: bool,
+                              story: Optional[StoryOutput] = None) -> SceneFrame:
+        bank = self.generate_shot_bank(project_id, scene, width, height, story=story)
         t2v_clip = None
         if use_text_to_video:
             t2v_out = project_dir(project_id) / "video" / "t2v" / f"{scene.scene_id}.mp4"
@@ -600,7 +598,13 @@ class VideoAgent:
     # ---- subtitles -------------------------------------------------------
 
     def _embed_subtitles(self, state: PipelineState, video_path: Path) -> Optional[Path]:
-        """Embed English + requested languages as switchable soft-sub tracks.
+        """Put subtitles where players will actually show them.
+
+        Most players ignore soft `mov_text` tracks inside an MP4 unless the
+        viewer digs into a menu, so by default the chosen language is **burned
+        into the picture** and the remaining languages ride along as switchable
+        tracks. Sidecar .srt/.vtt files are written next to the video too: VLC
+        loads a same-named .srt automatically and the web player uses the .vtt.
 
         A language whose translation fails is skipped (never shipped as English
         under a foreign label). Translations are cached on the VideoOutput and
@@ -632,19 +636,63 @@ class VideoAgent:
             tracks[lang] = [{"start_ms": int(s.start_ms / speed), "end_ms": int(s.end_ms / speed),
                              "text": t} for s, t in zip(segs, texts)]
 
-        out = project_dir(state.project_id) / "final_output_multilang.mp4"
-        res = self.tools.execute("video.multi_subtitle", in_path=str(video_path),
-                                 out_path=str(out), tracks=tracks,
-                                 default_language=video.subtitle_language
-                                 if video.subtitle_language in tracks else "English")
-        if not res.success:
-            log.warning("subtitle embed failed: %s — returning video without subtitles",
-                        res.error)
+        if not tracks:
             return None
-        video.subtitle_languages = list(res.metadata.get("languages", []))
-        log.info("embedded %d soft-sub tracks (%s); default=%s", len(video.subtitle_languages),
-                 ", ".join(video.subtitle_languages), video.subtitle_language)
+        proj = project_dir(state.project_id)
+        self._write_sidecars(proj, tracks)
+
+        final = video_path
+        burned = None
+        chosen = video.subtitle_language if video.subtitle_language in tracks else "English"
+        if video.burn_subtitles:
+            res = self.tools.execute(
+                "video.subtitle", in_path=str(final),
+                out_path=str(proj / "final_output_subtitled.mp4"),
+                lines=tracks[chosen], language=chosen,
+            )
+            if res.success:
+                final, burned = Path(res.data), chosen
+                log.info("burned %s subtitles into the picture", chosen)
+            else:
+                log.warning("subtitle burn-in failed: %s — falling back to soft tracks only",
+                            res.error)
+        video.burned_subtitle_language = burned
+
+        # The burned language would double up if it were also a soft track.
+        soft = {lang: lines for lang, lines in tracks.items() if lang != burned}
+        if not soft:
+            video.subtitle_languages = [burned] if burned else []
+            return final
+
+        out = proj / "final_output_multilang.mp4"
+        res = self.tools.execute("video.multi_subtitle", in_path=str(final),
+                                 out_path=str(out), tracks=soft,
+                                 default_language=chosen if chosen in soft else
+                                 next(iter(soft)))
+        if not res.success:
+            log.warning("subtitle embed failed: %s — keeping %s", res.error, final.name)
+            video.subtitle_languages = [burned] if burned else []
+            return final if burned else None
+        video.subtitle_languages = ([burned] if burned else []) +             list(res.metadata.get("languages", []))
+        log.info("subtitles: %s burned in, %s as switchable tracks",
+                 burned or "none", ", ".join(res.metadata.get("languages", [])) or "none")
         return out
+
+    @staticmethod
+    def _write_sidecars(proj: Path, tracks: Dict[str, List[Dict[str, Any]]]) -> None:
+        """Sidecar subtitle files: VLC auto-loads the .srt, the web player uses the .vtt."""
+        from mcp.tools.video_tools.subtitle_tool import SubtitleTool, to_webvtt
+        from shared.languages import iso639_1
+        sub_dir = proj / "subtitles"
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        for lang, lines in tracks.items():
+            srt = SubtitleTool._build_srt(lines)
+            (sub_dir / f"{lang.lower()}.srt").write_text(srt, encoding="utf-8")
+            (sub_dir / f"{lang.lower()}.vtt").write_text(to_webvtt(lines), encoding="utf-8")
+            # Same-named sidecars beside the MP4 so players pick them up on open.
+            code = iso639_1(lang)
+            for stem in ("final_output", "final_output_multilang", "final_output_subtitled"):
+                (proj / f"{stem}.{code}.srt").write_text(srt, encoding="utf-8")
 
     @staticmethod
     def _subtitle_languages(video: VideoOutput) -> List[str]:

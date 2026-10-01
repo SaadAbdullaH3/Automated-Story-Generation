@@ -33,6 +33,22 @@ def canonical(name: Optional[str]) -> Optional[str]:
     return next((n for n in SUBTITLE_LANGUAGES if n.lower() == key), None)
 
 
+# Scripts that need a font with Arabic/Indic/CJK coverage when burned into video,
+# and (for Arabic script) right-to-left shaping.
+RTL_LANGUAGES = {"Urdu", "Arabic"}
+WIDE_SCRIPT_LANGUAGES = RTL_LANGUAGES | {"Hindi", "Japanese", "Korean", "Chinese"}
+
+
+def iso639_1(name: str) -> str:
+    """Two-letter code, used for sidecar filenames like `film.ur.srt`."""
+    lang = canonical(name)
+    return SUBTITLE_LANGUAGES[lang][1].split("-")[0] if lang else "und"
+
+
+def is_rtl(name: str) -> bool:
+    return canonical(name) in RTL_LANGUAGES
+
+
 def iso639_2(name: str) -> str:
     lang = canonical(name)
     return SUBTITLE_LANGUAGES[lang][0] if lang else "und"

@@ -77,6 +77,9 @@ class VideoOutput(BaseModel):
     speed_factor: float = Field(default=1.0, gt=0)
     # Subtitles: default track + every language actually embedded.
     subtitle_language: str = "English"
+    # Burned-in subtitles always show; soft tracks need the viewer to find a menu.
+    burn_subtitles: bool = True
+    burned_subtitle_language: Optional[str] = None
     subtitle_languages: List[str] = Field(default_factory=list)
     # Translation cache: language -> texts aligned with the dialogue segments.
     # Valid only while `subtitle_source` matches the current English lines.

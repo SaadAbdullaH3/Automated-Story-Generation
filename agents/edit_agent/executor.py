@@ -176,7 +176,8 @@ class EditExecutor:
             if frame is None:
                 continue
             bank = self.video.generate_shot_bank(state.project_id, scene, video.width,
-                                                 video.height, seed_salt=f"v{state.version + 1}")
+                                                 video.height, seed_salt=f"v{state.version + 1}",
+                                                 story=state.script.story)
             frame.shot_bank, frame.image_path = bank, bank[0]
             frame.t2v_clip = None  # was generated from the old establishing image
             affected.extend(bank)
@@ -200,7 +201,8 @@ class EditExecutor:
             # quietly restore the old design.
             c.appearance_lock = build_appearance_lock(c, salt)
             c.image_seed = character_seed(c, salt)
-            new = self.video.generate_portrait(state.project_id, c, video.width, video.height)
+            new = self.video.generate_portrait(state.project_id, c, video.width, video.height,
+                                               story=state.script.story)
             video.portraits = [new if p.character_id == c.id else p for p in video.portraits]
             if not video.portrait_for(c.id):
                 video.portraits.append(new)

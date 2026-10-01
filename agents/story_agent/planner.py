@@ -188,9 +188,12 @@ def template_script(project_id: str, prompt: str,
             transition_in=transition,
         ))
 
+    from .visual_style import GENRE_STYLES, DEFAULT_STYLE
+    style = next((v[0] for k, v in GENRE_STYLES.items() if k in genre), DEFAULT_STYLE[0])
     story = StoryOutput(
         project_id=project_id,
         title=title,
+        visual_style=style,
         logline=logline,
         synopsis=(f"An exploration inspired by '{prompt}'. "
                   f"Across {n} acts, our protagonist Aria — joined by Kai — "
