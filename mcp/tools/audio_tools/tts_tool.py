@@ -146,16 +146,24 @@ class TtsTool(BaseTool):
     def _kokoro(self, text: str, out: Path, voice: str = "",
                 rate: int = BASE_RATE_WPM) -> Path:
         """Kokoro (open-source, offline, CPU). Model files come from scripts/get_kokoro.py."""
-        import numpy as np
-        import soundfile as sf
-        from kokoro_onnx import Kokoro
-
+        # Both checks come before the imports. Kokoro is optional, so on a
+        # machine that has not installed requirements-voices.txt the import
+        # raises ModuleNotFoundError — which says nothing about what to do.
         model = os.getenv("KOKORO_MODEL", "")
         voices = os.getenv("KOKORO_VOICES", "")
         if not (model and voices and Path(model).exists() and Path(voices).exists()):
             raise RuntimeError(
                 "Kokoro model files not found — run `python scripts/get_kokoro.py` "
                 "and set KOKORO_MODEL / KOKORO_VOICES in .env")
+
+        try:
+            import numpy as np
+            import soundfile as sf
+            from kokoro_onnx import Kokoro
+        except ImportError as e:
+            raise RuntimeError(
+                f"Kokoro needs a package that isn't installed ({e.name}) — "
+                "run `pip install -r requirements-voices.txt`") from e
 
         global _KOKORO
         if _KOKORO is None:

@@ -307,3 +307,31 @@ def test_a_total_image_outage_still_leaves_a_renderable_file(tmp_path, monkeypat
     # And a successful result is passed straight through.
     good = ToolResult(success=True, data=str(out))
     assert _ensure_image(good, out, "x", 320, 180) == str(out)
+
+
+def test_kokoro_explains_a_missing_package_instead_of_an_import_error(tmp_path,
+                                                                      monkeypatch):
+    """CI found this: on a machine without requirements-voices.txt installed,
+    choosing Kokoro raised `ModuleNotFoundError: No module named 'soundfile'`.
+    The laptop it was written on has the packages, so it could not show up
+    locally."""
+    import builtins
+
+    from mcp.tools.audio_tools.tts_tool import TtsTool
+
+    model, voices = tmp_path / "k.onnx", tmp_path / "v.bin"
+    model.write_bytes(b"x")
+    voices.write_bytes(b"x")
+    monkeypatch.setenv("KOKORO_MODEL", str(model))
+    monkeypatch.setenv("KOKORO_VOICES", str(voices))
+
+    real_import = builtins.__import__
+
+    def missing(name, *args, **kwargs):
+        if name in ("soundfile", "kokoro_onnx"):
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", missing)
+    with pytest.raises(RuntimeError, match="requirements-voices.txt"):
+        TtsTool()._kokoro("hello", tmp_path / "out.wav")
