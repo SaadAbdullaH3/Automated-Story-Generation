@@ -1,0 +1,128 @@
+# Deploying to a server
+
+The whole app — web interface, API, workers, Postgres, HTTPS — runs on one
+small Linux machine with Docker Compose. The target is Oracle Cloud's Always
+Free ARM VM: **2 OCPUs and 12 GB of RAM** (cut from 4/24 in June 2026), free
+for good, with no card charge as long as you stay on Always Free resources.
+
+How fast it renders, measured on the laptop pinned to two cores: a 20 s,
+3-scene film's rendering went from 47.5 s to 67.7 s. The slowest step
+(ffmpeg's camera-move filter) uses one core however many there are. Oracle's
+ARM cores are slower per core than a Ryzen's, so expect roughly twice the
+laptop's time end to end — about 3–4 minutes for a short film. Planning (the
+storyboard) is mostly waiting on the model and image APIs and feels the same.
+
+## 1. The VM (Oracle console)
+
+1. Create the account at <https://www.oracle.com/cloud/free/>. It asks for a
+   card to verify you; Always Free resources are never charged. **Choose the
+   home region carefully — it can't be changed**, and ARM capacity varies by
+   region.
+2. **Compute → Instances → Create instance**
+   - Image: **Canonical Ubuntu 24.04** (the aarch64 build is picked for you
+     once the shape is ARM).
+   - Shape: **Ampere → VM.Standard.A1.Flex**, 2 OCPUs, 12 GB memory.
+   - Networking: create a new VCN with a **public subnet**, and assign a
+     public IPv4 address.
+   - SSH key: paste the public key you made for this (see below).
+   - Boot volume: 100 GB is plenty (Always Free covers 200 GB in total).
+
+   "Out of host capacity" is common for A1 shapes: try another availability
+   domain, or again later.
+3. **Open the web ports** — Networking → Virtual cloud networks → your VCN →
+   the subnet's security list → *Add ingress rules*, source `0.0.0.0/0`:
+   TCP 80, TCP 443, and UDP 443 (HTTP/3). The VM's own firewall is opened by
+   the setup script; both have to allow a port.
+
+An SSH key for the VM, made on your own machine (the private half never
+leaves it):
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/storygen_vm -C storygen-vm
+```
+
+Paste `~/.ssh/storygen_vm.pub` into the console, then connect with
+`ssh -i ~/.ssh/storygen_vm ubuntu@<public-ip>`.
+
+## 2. On the VM
+
+```bash
+git clone https://github.com/SaadAbdullaH3/Automated-Story-Generation.git storygen
+cd storygen && bash deploy/setup-vm.sh
+```
+
+The script (safe to run again) installs Docker, opens ports 80/443 in the
+VM's iptables — Oracle's Ubuntu image rejects everything but SSH — gives the
+`data/` folder to the containers' user (uid 10001; without it the first film
+fails with "permission denied"), and writes a `.env` with a generated
+database password and `DOMAIN`.
+
+**The address.** Without a domain of your own, `DOMAIN` is set to
+`<your-ip-with-dashes>.sslip.io` — a free name that resolves to your IP, no
+account needed, and Caddy gets a real certificate for it. To use your own name
+instead, point an A record at the VM and set `DOMAIN` in `.env`.
+
+Then add your API keys to `.env` (the same ones as on your laptop) and start:
+
+```bash
+docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
+```
+
+The first start builds the image on the VM (it is ARM, so the laptop's image
+won't run there) and downloads the Kokoro voice model into `data/` once,
+checking its SHA-256. Then open `https://<DOMAIN>`: the first account made is
+the administrator.
+
+**GitHub sign-in** needs its own OAuth app for the server, because an OAuth
+app has one callback URL: register a second one with
+`https://<DOMAIN>/api/auth/github/callback` and put *its* id and secret in the
+server's `.env`.
+
+## What runs
+
+| Service | |
+|---|---|
+| `caddy` | HTTPS on 80/443, certificate obtained and renewed automatically |
+| `api` | the web interface and API, reachable only through Caddy |
+| `worker` | renders and edits; scale with `--scale worker=2` (on 2 cores, one is right) |
+| `db` | Postgres 16, its data in a Docker volume |
+| `models` | runs once per start: fetches/verifies the voice model |
+
+## Day to day
+
+```bash
+P="-f docker-compose.yml -f deploy/docker-compose.prod.yml"
+docker compose $P ps                     # health of each service
+docker compose $P logs -f worker         # what a render is doing
+git pull && docker compose $P up -d --build   # update
+```
+
+Both `api` and `worker` report health: the API through `/health`, the worker
+by having reached the job queue in the last two minutes. A worker that can't
+reach the database turns unhealthy rather than looking fine.
+
+## Backups
+
+The database (accounts, every version, the queue) and `data/` (the films and
+their versions) are the only things that can't be rebuilt. Nightly:
+
+```bash
+mkdir -p ~/backups
+( crontab -l 2>/dev/null; echo "15 3 * * * cd ~/storygen && bash deploy/backup.sh >> ~/backups/backup.log 2>&1" ) | crontab -
+```
+
+Each night is a `pg_dump` plus an rsync snapshot of `data/` hard-linked to the
+night before, so a night costs only what changed; the newest seven of each
+are kept (`BACKUP_KEEP`). To put one back — it replaces the current database
+and films:
+
+```bash
+bash deploy/restore.sh latest          # or a name from ~/backups/db
+```
+
+This was tested as a round trip: back up twice, empty the database and delete
+the films, restore — the account, its version and every file came back,
+owned by the containers' user, and the account could sign in and see its
+film. The backups live on the same disk as the app, so they protect against
+mistakes, not against losing the VM; copying `~/backups` somewhere else
+(another machine, or an R2 bucket) is the next step.

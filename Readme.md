@@ -5,7 +5,7 @@ music, subtitles and cuts.**
 
 [![tests](https://github.com/SaadAbdullaH3/Automated-Story-Generation/actions/workflows/tests.yml/badge.svg)](https://github.com/SaadAbdullaH3/Automated-Story-Generation/actions/workflows/tests.yml)
 ![python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
-![tests](https://img.shields.io/badge/tests-357%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-371%20passing-brightgreen)
 ![cost](https://img.shields.io/badge/running%20cost-%240-brightgreen)
 
 ![A flooded city at dawn, the camera drifting over it, Urdu subtitles burned into the picture](docs/demo.gif)
@@ -396,6 +396,11 @@ To scale the API and the renderers apart, set `WORKER_INLINE=0` and run
 ```bash
 docker compose up --build --scale worker=3   # API + 3 workers + Postgres
 ```
+
+On a server the same stack runs behind Caddy, which gets and renews the HTTPS
+certificate by itself — no domain needed, `<ip>.sslip.io` works — with nightly
+backups whose restore is tested end to end. The whole runbook, from an empty
+Oracle Cloud free VM to a working address, is [deploy/README.md](deploy/README.md).
 
 `DATABASE_URL` switches the version log and the queue from the default SQLite
 file to Postgres; `STORAGE_URL=s3://bucket` publishes finished films to any
