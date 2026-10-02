@@ -21,6 +21,10 @@ log = get_logger("auth")
 MAX_FAILED_ATTEMPTS = 8
 LOCKOUT_MINUTES = 15
 
+# Stored for accounts that sign in elsewhere. Not an argon2 hash, so no
+# password ever verifies against it — there is nothing to guess.
+NO_PASSWORD = "!external"
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -97,13 +101,17 @@ def list_users() -> List[User]:
 
 def create(email: str, password: str, role: str = "user") -> User:
     """Create an account. The very first one is an admin, whatever is asked for."""
-    email = normalise_email(email)
-    if "@" not in email or len(email) < 3:
-        raise AuthError("that doesn't look like an email address")
     try:
         password_hash = passwords.hash_password(password)
     except passwords.WeakPassword as e:
         raise AuthError(str(e)) from e
+    return _insert(email, password_hash, role)
+
+
+def _insert(email: str, password_hash: str, role: str = "user") -> User:
+    email = normalise_email(email)
+    if "@" not in email or len(email) < 3:
+        raise AuthError("that doesn't look like an email address")
 
     first = count() == 0
     if first:
@@ -175,6 +183,96 @@ def _record_failure(user_id: str, previous: int) -> None:
         log.warning("account %s locked after %d failed attempts", user_id, attempts)
     with db.get_engine().begin() as c:
         c.execute(db.users.update().where(db.users.c.id == user_id).values(**values))
+
+
+# ---- signing in elsewhere (GitHub) -----------------------------------------
+
+PROVIDER_LABELS = {"github": "GitHub"}
+
+
+def _label(provider: str) -> str:
+    return PROVIDER_LABELS.get(provider, provider)
+
+
+def user_for_identity(provider: str, subject: str) -> Optional[User]:
+    with db.get_engine().connect() as c:
+        row = c.execute(
+            select(db.users).join(db.identities, db.identities.c.user_id == db.users.c.id)
+            .where(db.identities.c.provider == provider,
+                   db.identities.c.subject == subject)
+        ).mappings().first()
+    return _user(row) if row else None
+
+
+def identities_for(user_id: str) -> List[str]:
+    """The providers this account can sign in with besides its password."""
+    with db.get_engine().connect() as c:
+        rows = c.execute(select(db.identities.c.provider)
+                         .where(db.identities.c.user_id == user_id)).all()
+    return sorted({r[0] for r in rows})
+
+
+def _link(user_id: str, provider: str, subject: str, login: str) -> None:
+    from sqlalchemy.exc import IntegrityError
+    try:
+        with db.get_engine().begin() as c:
+            c.execute(db.identities.insert().values(
+                provider=provider, subject=subject, user_id=user_id,
+                login=login, created_at=utcnow()))
+    except IntegrityError as e:
+        # The primary key is the real guard against two accounts racing for it.
+        raise AuthError(f"that {_label(provider)} account is connected to a different "
+                        "account") from e
+
+
+def connect_identity(user: User, provider: str, subject: str, login: str) -> None:
+    """Let a signed-in account sign in with `provider` from now on."""
+    holder = user_for_identity(provider, subject)
+    if holder is not None and holder.id != user.id:
+        raise AuthError(f"that {_label(provider)} account is connected to a different account")
+    if holder is None:
+        _link(user.id, provider, subject, login)
+        log.info("%s connected %s (%s)", user.email, provider, login)
+
+
+def sign_in_external(provider: str, subject: str, login: str,
+                     email: Optional[str]) -> User:
+    """The account a sign-in from `provider` belongs to, making one if allowed.
+
+    Never joins an existing account because the email matches: addresses here
+    are not proven, so whoever registered the address first would receive the
+    sign-in. That account connects the provider while signed in instead.
+    """
+    user = user_for_identity(provider, subject)
+    if user is not None:
+        if not user.is_active:
+            raise AuthError("that account is disabled")
+        now = utcnow()
+        with db.get_engine().begin() as c:
+            c.execute(db.users.update().where(db.users.c.id == user.id)
+                      .values(last_login_at=now))
+        user.last_login_at = now
+        return user
+    name = _label(provider)
+    if not email:
+        raise AuthError(f"{name} didn't share a verified email address — verify one "
+                        f"there, or sign in with a password")
+    if get_by_email(email) is not None:
+        raise AuthError("an account with that email already exists — sign in with your "
+                        f"password, then connect {name} from the top bar")
+    if not signups_allowed():
+        raise AuthError("sign-ups are closed on this deployment")
+    user = _insert(email, NO_PASSWORD)
+    try:
+        _link(user.id, provider, subject, login)
+    except AuthError:
+        # Another sign-in claimed this identity first; don't leave an
+        # account behind that nothing can sign in to.
+        with db.get_engine().begin() as c:
+            c.execute(db.users.delete().where(db.users.c.id == user.id))
+        raise
+    log.info("created %s account %s through %s", user.role, user.email, name)
+    return user
 
 
 def set_password(user_id: str, password: str) -> None:

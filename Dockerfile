@@ -1,4 +1,15 @@
 # The API and the worker are the same image, started with different commands.
+
+# ---- the interface: a static export, built once, served by FastAPI ----------
+FROM node:22-slim AS web
+WORKDIR /web
+# Dependencies first, so editing a component doesn't reinstall them.
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
+
+# ---- the service --------------------------------------------------------------
 FROM python:3.11-slim
 
 # ffmpeg/ffprobe do every bit of the audio and video work. The Noto fonts are
@@ -23,6 +34,9 @@ COPY requirements.txt requirements-postgres.txt ./
 RUN pip install --no-cache-dir -r requirements.txt -r requirements-postgres.txt
 
 COPY . .
+# Without this the container would serve the old page: web/out is gitignored,
+# so it only exists if it is built.
+COPY --from=web /web/out /app/web/out
 
 # Never run the pipeline as root — it executes ffmpeg on model-generated input.
 RUN useradd --create-home --uid 10001 app \

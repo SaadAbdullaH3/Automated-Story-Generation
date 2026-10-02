@@ -5,7 +5,7 @@ music, subtitles and cuts.**
 
 [![tests](https://github.com/SaadAbdullaH3/Automated-Story-Generation/actions/workflows/tests.yml/badge.svg)](https://github.com/SaadAbdullaH3/Automated-Story-Generation/actions/workflows/tests.yml)
 ![python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
-![tests](https://img.shields.io/badge/tests-274%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-357%20passing-brightgreen)
 ![cost](https://img.shields.io/badge/running%20cost-%240-brightgreen)
 
 ![A flooded city at dawn, the camera drifting over it, Urdu subtitles burned into the picture](docs/demo.gif)
@@ -424,6 +424,33 @@ TEST_S3_ENDPOINT=http://127.0.0.1:5111 S3_REGION=us-east-1 \
 Point `TEST_S3_ENDPOINT` at `https://<account>.r2.cloudflarestorage.com` with
 real R2 credentials and the same test verifies Cloudflare R2.
 
+### The interface
+
+The screen is the storyboard. Write a sentence, and the plan streams in live —
+the script first, so every scene's tone and lines are readable while its frame
+is still being drawn, then each picture develops in as it arrives. Fix any
+scene in place, then **Render this film**, with the image cost stated next to
+the button from the real cast and scene count. The finished film plays with its
+scenes as chapters.
+
+Under the film, change it in a sentence — "make the voices in scene 2
+whispered", "the recipe scene should feel darker". It first says what it took
+that to mean, so a misread shows before anything is rendered; a request it
+can't carry out is refused with the film left exactly as it was, never
+"applied" as a silent no-op. Every cut is kept under **Versions** in your own
+words, and going back to one is itself a new version.
+
+It's a Next.js static export that FastAPI serves itself — no Node in
+production, one origin, no CORS:
+
+```bash
+cd web && npm ci && npm run build
+python main.py serve        # http://localhost:8000
+```
+
+The original page is still at `/classic/`. Three design directions that were
+considered are in `docs/mockups/`.
+
 ### Camera moves
 
 A still is not a shot. Each image gets a camera move chosen for what the shot
@@ -473,6 +500,13 @@ stores only its hash, so a stolen dump can't be replayed, signing out really
 signs out, and disabling an account ends its sessions at once. Passwords are
 argon2id. A wrong password and an unknown address give the identical answer,
 and eight failures lock the account for fifteen minutes.
+
+**Sign in with GitHub** is there when `GITHUB_CLIENT_ID` and
+`GITHUB_CLIENT_SECRET` are set. It never joins an existing account just because
+the email matches — addresses aren't proven here, so whoever registered one
+first would receive the sign-in. An account with a password connects GitHub
+while signed in instead, and the callback is refused unless it carries the
+state this browser was handed.
 
 Projects are private to their owner. Asking for someone else's gets a 404
 rather than a 403, because a 403 would confirm the id is real. That applies to

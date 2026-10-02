@@ -14,6 +14,7 @@ from auth import accounts
 from auth.deps import require_project, require_user
 from auth.accounts import User
 from shared import voices
+from agents.orchestrator.storyboard_view import cast, image_budget, scene_cards
 from shared.assets import asset_url
 from shared.languages import iso639_1, supported_names
 from shared.utils.files import project_dir
@@ -63,12 +64,12 @@ def _check_engine(name: Optional[str]) -> None:
 
 
 def _accepted(kind: str, project_id: str, status: str, owner: User,
-              **payload) -> RunResponse:
+              max_attempts: int = 2, **payload) -> RunResponse:
     payload = {k: v for k, v in payload.items() if v is not None}
     # Record the owner before the job exists, so a worker can't finish a render
     # into a project nobody is responsible for.
     accounts.register_project(project_id, owner.id)
-    job = jobs.enqueue(kind, project_id, payload)
+    job = jobs.enqueue(kind, project_id, payload, max_attempts=max_attempts)
     log.info("queued %s %s for %s", kind, job.id, project_id)
     return RunResponse(project_id=project_id, job_id=job.id, status=status,
                        websocket=f"/ws/progress/{project_id}")
@@ -131,14 +132,29 @@ def start_plan(req: PlanRequest, user: User = Depends(require_user)):
 
 
 @router.get("/storyboard/{project_id}", dependencies=[Depends(require_project)])
-def get_storyboard(project_id: str):
+def get_storyboard(project_id: str, engine: Optional[str] = None):
+    """The storyboard, as cards.
+
+    `engine` names the voice engine the creator is about to render with, so
+    each line shows the voice that will actually speak it.
+    """
+    if engine and voices.get(engine) is None:
+        raise HTTPException(400, f"unknown voice engine {engine!r}")
     state = sm.latest(project_id)
     if not state or not state.storyboard:
         raise HTTPException(404, f"no storyboard for {project_id}")
     board = state.storyboard.model_dump(mode="json")
+    # The same cards the live plan streamed, so a reload looks identical.
+    cards = {c["scene_id"]: c for c in scene_cards(state.script, engine)}
     for frame in board["frames"]:
         if frame.get("preview_path"):
             frame["preview_url"] = asset_url(frame["preview_path"])
+        card = cards.get(frame["scene_id"], {})
+        frame["tone"] = card.get("tone", "")
+        frame["move"] = card.get("move", "")
+        frame["lines"] = card.get("lines", [])
+    board["cast"] = cast(state.script, engine)
+    board["images"] = image_budget(state.script)
     board["stage"] = state.stage
     board["version"] = state.version
     return board
@@ -188,6 +204,52 @@ def subtitle_tracks(project_id: str):
                            "url": asset_url(vtt),
                            "burned_in": lang == state.video.burned_subtitle_language})
     return tracks
+
+
+@router.get("/film/{project_id}", dependencies=[Depends(require_project)])
+def film(project_id: str):
+    """Everything the player needs, as URLs rather than file paths.
+
+    The state endpoint returns raw paths (Windows ones, on this machine), and
+    the old page split those strings in the browser to guess an asset URL —
+    which stops working the moment assets are served from a bucket.
+    """
+    state = sm.latest(project_id)
+    if not state or not state.video or not state.video.final_video_path:
+        raise HTTPException(404, f"no film yet for {project_id}")
+    video = state.video
+    speed = video.speed_factor or 1.0
+    manifest = state.audio.manifest if state.audio else None
+    timings = {s.scene_id: s for s in (manifest.scenes if manifest else [])}
+    previews = {f.scene_id: f.preview_path
+                for f in (state.storyboard.frames if state.storyboard else [])}
+    stills = {f.scene_id: f.image_path for f in (video.frames or [])}
+
+    chapters = []
+    for scene in (state.script.scenes if state.script else []):
+        t = timings.get(scene.scene_id)
+        chapters.append({
+            "scene_id": scene.scene_id,
+            "index": scene.index,
+            "title": scene.title,
+            "tone": getattr(scene, "tone", "") or "",
+            # A sped-up film plays its timeline faster, so the chapter marks move.
+            "start_ms": round(t.start_ms / speed) if t else None,
+            "end_ms": round(t.end_ms / speed) if t else None,
+            "poster_url": asset_url(previews.get(scene.scene_id)
+                                    or stills.get(scene.scene_id)),
+        })
+    return {
+        "project_id": project_id,
+        "title": state.script.story.title if state.script else "",
+        "logline": state.script.story.logline if state.script else "",
+        "video_url": asset_url(video.final_video_path),
+        "duration_ms": video.duration_ms,
+        "width": video.width, "height": video.height, "fps": video.fps,
+        "version": state.version,
+        "chapters": chapters,
+        "subtitles": subtitle_tracks(project_id),
+    }
 
 
 @router.get("/languages")

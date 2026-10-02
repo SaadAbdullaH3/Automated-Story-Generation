@@ -30,6 +30,8 @@ METHODS = {
     "plan": "plan",
     "render": "render",
     "rerun_phase": "re_run_phase",
+    "edit": "edit",
+    "revert": "revert",
 }
 
 HEARTBEAT_S = 15.0

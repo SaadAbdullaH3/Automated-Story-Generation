@@ -1,8 +1,11 @@
 """Project-wide constants and paths."""
+import os
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-DATA_DIR = ROOT_DIR / "data"
+# Everything a deployment keeps — films, versions, the database — lives here.
+# DATA_DIR moves it (a container volume, a data disk, a throwaway copy).
+DATA_DIR = Path(os.getenv("DATA_DIR") or ROOT_DIR / "data").resolve()
 OUTPUTS_DIR = DATA_DIR / "outputs"
 TEMP_DIR = DATA_DIR / "temp"
 STATE_DIR = DATA_DIR / "state_versions"

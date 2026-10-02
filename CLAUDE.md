@@ -50,6 +50,8 @@ python main.py storyboard|restyle|render <pid>     # review, edit, then render
 python scripts/benchmark.py --offline              # fixed prompts, measured
 python main.py providers                   # which providers are detected
 python main.py serve --reload              # web UI on http://localhost:8000 (runs a worker too)
+cd web && npm ci && npm run build          # build the creator UI; serve then uses it at /
+cd web && npm run dev                      # UI with hot reload on :3000, API proxied to :8000
 python main.py worker                      # a worker process on its own (WORKER_INLINE=0 for the API)
 python main.py jobs [--status failed]      # the queue: what ran, what broke
 python main.py users [create <email> --admin | passwd <email> | role <email> admin]
@@ -60,6 +62,9 @@ python main.py list | history <project_id>
 
 Outputs go to `data/outputs/<project_id>/`, version snapshots to
 `data/state_versions/`, and the version log to `data/state.db` (all gitignored).
+`DATA_DIR=/somewhere` moves all three — a throwaway instance for testing never
+touches the real films (state records absolute paths, so copying `data/` is
+not enough).
 
 ## Architecture map
 
@@ -73,20 +78,22 @@ Outputs go to `data/outputs/<project_id>/`, version snapshots to
 | Phase 2 | `agents/audio_agent/` | `render_line` (TTS) → `retime` (timeline) → `remix` (per-scene BGM + master with lines placed at `start_ms`). Edits reuse these. |
 | Camera | `agents/video_agent/camera.py` | Camera moves and the grade over them. The move is computed at 3x the output size and scaled down, which is what makes pans smooth enough to use; `move_for` picks it from the shot's job and the scene's tone, `grade_for` from the story's own `visual_style`. |
 | Phase 3 | `agents/video_agent/` | `run`: portraits + 3-image shot bank per scene. `compose`: plan shots from the timeline → render changed scenes only (`plan_signature`) → scene crossfades → master mux → speed → soft-sub tracks. Edits call `compose`. |
-| Phase 5 | `agents/edit_agent/` | `intent_classifier.py` (LLM or regex; matches character names) → `planner.py` (steps) → `executor.py` (reuses Phase 2/3 primitives) → snapshot. |
+| Phase 5 | `agents/edit_agent/` | `intent_classifier.py` (LLM or regex; matches character names) → `planner.py` (steps) → `executor.py` (reuses Phase 2/3 primitives) → snapshot. Runs as an `edit` job; starts from, and on failure returns to, the saved version's files. `describe.py` says what a request was understood as. Scene-only voices live in `AudioOutput.scene_voices`. |
 | Versioning | `state_manager/` | Append-only SQLite log + asset copies per version; `referenced_files(state)` collects every file the state points to. Revert creates a new version. |
 | Languages | `shared/languages.py` | Supported subtitle languages (ISO codes + MyMemory codes). UI dropdown is served from here. |
 | Tool layer | `mcp/` | Internal tool registry (**not** the MCP protocol). Tools register on `import mcp.tools`; agents call `ToolExecutor().execute("audio.tts", ...)`. Each tool tries providers in order and falls back. |
 | Model settings | `config/providers.yaml` + `shared/providers.py` | **Which model serves each role** (story, edit_intent, translate, image, tts, music). Agents never name a model: they call `providers.chain(role)` and use the first available, falling through on failure. `concurrency:` per provider drives `shared/utils/parallel.run_jobs`. |
 | LLM client | `mcp/tools/llm_tools/llm_client.py` | `get_llm_client(role)` walks that role's chain: Gemini (google-genai, native JSON schema), Groq / OpenRouter / Ollama / OpenAI (all via the openai client), Anthropic, then `mock` = use the offline fallback. |
-| Accounts | `auth/` | `passwords.py` (argon2id), `accounts.py` (users, lockout, project ownership), `sessions.py` (opaque token in an HttpOnly cookie, stored hashed), `deps.py` (**the only place a request becomes a user** — routes depend on `require_user` / `require_project` rather than checking for themselves). |
-| Jobs | `jobs/` | **Runs are rows, not closures.** `queue.py` (enqueue/claim/heartbeat/cancel, one atomic UPDATE per claim) and `worker.py` (claims jobs, runs the orchestrator, publishes assets). Cancellation lands between pipeline steps, never mid-ffmpeg. |
+| Accounts | `auth/` | `passwords.py` (argon2id), `accounts.py` (users, lockout, project ownership, linked identities), `sessions.py` (opaque token in an HttpOnly cookie, stored hashed), `github.py` (OAuth with GitHub — never joins accounts by email), `deps.py` (**the only place a request becomes a user** — routes depend on `require_user` / `require_project` rather than checking for themselves). |
+| Jobs | `jobs/` | **Runs are rows, not closures.** `queue.py` (enqueue/claim/heartbeat/cancel, one atomic UPDATE per claim) and `worker.py` (claims jobs, runs the orchestrator, publishes assets). Cancellation lands between pipeline steps, never mid-ffmpeg. **One job per project at a time, in queue order** — everything that writes a version (plan, render, edit, revert) goes through here. |
 | Database | `shared/db.py` | One database for the version log and the queue. SQLite (WAL) by default, Postgres via `DATABASE_URL`, same SQL through SQLAlchemy Core. |
 | Assets | `shared/assets.py` | The only place a file path becomes a URL. Local disk by default; `STORAGE_URL=s3://bucket` publishes to any S3-compatible bucket (R2) so the worker and the API need not share a filesystem. |
 | Voices | `shared/voices.py` + `backend/routes/voices.py` | Which engines work on this machine and why not, their voices, and a cached one-line sample so a voice can be heard before a render. |
 | Fonts | `shared/fonts.py` | Picks an installed font with the script's glyphs (`Segoe UI` on Windows, Noto in the container). A missing font draws nothing rather than failing. |
 | Backend | `backend/` | FastAPI routes, DB-backed progress (`services/progress.py`), WebSocket at `/ws/progress/{pid}`, `/assets` serves `data/outputs`. |
-| Frontend | `frontend/src/` | Vanilla HTML/CSS/JS, no build step, served by FastAPI. |
+| Frontend | `web/` | **The creator interface.** Next.js 16 static export, served by FastAPI at `/` when built. The storyboard is the screen: a plan streams in (script first, then each frame), the creator edits it, renders, and watches with scenes as chapters. See `web/README.md`. |
+| Storyboard cards | `agents/orchestrator/storyboard_view.py` | The single source of a card — tone, camera move, lines and the voice that will speak each — used by both the live plan stream and the storyboard endpoint, so a reload shows exactly what the stream did. |
+| Classic UI | `frontend/src/` | The original vanilla page, kept at `/classic/` while the new one takes over. |
 
 ## Conventions
 
@@ -399,6 +406,147 @@ Worth knowing operationally: `data/state.db` runs in WAL mode, so copying that
 file alone does **not** copy recent writes — a backup taken with `cp` came back
 empty. Use SQLite's backup API (`sqlite3.Connection.backup`) or `VACUUM INTO`.
 
+## M8 results (2026-10-02)
+
+Frontend rebuilt as the "creator" design — chosen over an editorial dashboard
+and an industrial terminal (all three are in `docs/mockups/`), because both
+dashboards put the machine in the middle and a content creator doesn't care
+that sync is frame-exact. Next.js 16 static export served by FastAPI: still one
+container, one origin, no CORS. Title face: Fraunces (eight candidates in
+`docs/mockups/fonts.html`).
+
+Verified in a real browser against a copy of the real database: first-run
+setup, the library with real posters, a plan streaming in live (script first,
+then each frame developing in), a render, and the player — whose scene chapters
+seek correctly. The render's log showed all three wide shots
+**"reused the storyboard preview"**.
+
+What building it found, all fixed and each pinned by a test that fails on the
+old code:
+- **Preview reuse never fired in the real path.** `plan()` still defaulted
+  previews to 512x288, overriding the 1280x720 the schema said, so signatures
+  never matched the render. The earlier test drew the storyboard directly at a
+  matching size and passed anyway; the new one goes through `plan` and asks with
+  the size `render` actually uses.
+- **A scene's tone never reached the camera in a real render** — M6's claim
+  was overstated. The agent only makes `establishing`, `character` and
+  `lip_sync` shots, and `move_for` sent all three to fixed lists; tone was only
+  consulted for a `"detail"` kind the agent never produces, which is exactly
+  what M6's test checked. Now establishing shots and narration take the scene's
+  mood, and tense dialogue pushes in. The new test renders a film and reads back
+  the moves the agent chose.
+- **Then every scene opened on the same move.** The pick was offset by scene
+  number into each mood's list, and `drift` happened to sit at that position in
+  all three — a scene now opens on its mood's own move.
+- Scene numbers came from the model's own (zero-based) index; cards and status
+  messages now count from one by position.
+
+New backend surface for the UI: the plan streams `storyboard/script` (cards,
+cast, image budget, prompt) and `storyboard/frame` events; `GET
+/api/pipeline/film/{pid}` gives the player URLs instead of file paths (the old
+page split Windows paths in the browser to guess them); the storyboard takes
+`?engine=` so cards name the voices that will actually speak; the library has a
+poster frame per film; the job status carries the prompt.
+
+CI gained a `web` job (lockfile install, build, typecheck, export check), and
+the Dockerfile is now multi-stage so the image serves the new interface — it
+would otherwise have shipped the old page, since `web/out` is gitignored. The
+Node stage was verified by a clean `npm ci && npm run build` from only the
+committed files; the full image has not been built (Docker was not running).
+
+**Voice edits compose.** A scene-scoped voice edit rendered that scene's lines
+from throwaway copies of each voice, so the next edit to touch them — "make
+everyone louder", a change to one character, "regenerate the audio" — rebuilt
+them from the character's voice and the scene's change vanished; asking twice
+for a different voice in a scene landed on the same one. Scenes now keep their
+own voices (`AudioOutput.scene_voices`) and later edits adjust those as well,
+in order: scene 2 whispering, then everyone louder, is scene 2 whispering
+louder. "Regenerate the audio" used to rebuild every voice from defaults *and*
+switch a Kokoro film to the chain's first engine; it now re-records in place.
+The offline classifier missed "voices", "whispered", "deeper", "narrator", so
+the natural phrasing of a scene voice edit did nothing; and a tone it didn't
+know relabelled the voice, re-recorded identical lines and reported success —
+it now fails, naming the tones it knows. Every behaviour test goes through
+`EditAgent.edit` on a rendered film, and all six still fail when only the
+executor is put back to the old code.
+
+**Edit and undo in the creator interface.** The new UI ended at the player;
+editing and versions existed only on `/classic/`. Under the film now: one
+sentence, which first comes back as what it was understood to mean, and a
+version list in the creator's own words with "Go back".
+
+Building that found the edit path was not safe to put in front of anyone:
+- **Edits ran inside the HTTP request** — no progress, no cancel, gone on an
+  API restart, and on a worker's host only by luck. Edits and reverts are now
+  jobs (`edit`, `revert`); the classic endpoints queue and wait so their
+  contract holds.
+- **Two jobs for one film could run at once** on two workers, both from the
+  same version, the second silently undoing the first. The claim now skips a
+  job while an older one for its project is unfinished — decided by that
+  row's existence, not its lock, so it holds under `SKIP LOCKED`.
+- **A failed edit left its half-applied change on disk** (a filter darkens the
+  shots in place, then the cut fails) for the next edit to bake in. An edit
+  now starts from, and on failure or cancel returns to, the saved version's
+  files.
+- **Every revert was saved claiming to be the version it went back to.**
+  Restoring a version's files copied its own `state.json` along, and the
+  revert's snapshot wrote it over the new record — so the player showed the
+  wrong version and "regenerate this scene", which salts its seed with the
+  version, could repeat an earlier image.
+- **One unreadable image hung a worker forever.** ffmpeg loops a still as an
+  endless input and, failing to decode it, retries instead of exiting; the
+  heartbeat kept the job looking alive and a cancel never landed. Stills are
+  decoded first and shots have a time limit.
+
+Each fix has a test shown to fail without it. `DATA_DIR` now moves everything
+a deployment keeps (used to verify against a throwaway instance; the
+container will want it too).
+
+**Live, an edit did nothing and said "Change made".** With real keys, Groq
+classified "make the voices in scene 2 whispered" as intent `whisper_voices`
+with `{"voice_type": "whisper"}` — the prompt asked for "a short snake_case
+action name" and free-form parameters, so the model invented both. The
+planner fell back to re-recording, the executor ignored the unknown key, and
+the same lines were recorded in the same voice. Gemini never got a turn: the
+open `parameters` dict became `additionalProperties`, which its developer API
+rejects. Now the model fills a closed form (`agents/edit_agent/vocabulary.py`)
+whose intents and values are enumerated from what the editor can actually do;
+an invented name fails validation and is retried with the error, a request
+nothing matches is "unclear", and the planner refuses unclear or incomplete
+edits with what to say instead ("which tone? whispered, soft, …"). Measured
+against both live models: Gemini now accepts the schema; Groq mapped all five
+real phrasings, including "the recipe scene should feel darker" to scene 2 by
+its title, and answered "unclear" for "make it better".
+
+Verified end to end in a browser against a throwaway instance (`DATA_DIR`),
+on a film made through the interface (Groq script after Gemini 503'd,
+Cloudflare FLUX images, Kokoro voices, 107 s render): "make the voices in scene 2
+whispered" re-recorded only scene 2 at 140 wpm (its lines 3.8 s → 5.1 s, the
+chapters after it moved), "make everyone louder" left scene 2 whispering at
+0.91 and everyone else at 1.3, "Go back" to the first cut produced v6 —
+recording that it is v6 — with the film byte-identical to v2, and "make it
+better" was refused with nothing changed.
+
+**Sign in with GitHub** (`auth/github.py`, an OAuth app, authorization-code
+flow; off unless `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are set):
+- A GitHub sign-in **never joins an existing account because the email
+  matches.** Addresses here are never proven, so whoever registered the address
+  first would receive the sign-in (account pre-hijacking). An account with a
+  password connects GitHub from the top bar while signed in instead.
+- The callback is refused unless its `state` matches the one handed to this
+  browser in an HttpOnly, SameSite cookie scoped to `/api/auth/github` — and
+  checked before the code is spent (login CSRF).
+- Identities are keyed by GitHub's numeric id, not the login, which can be
+  renamed. GitHub-only accounts store an unusable password hash, so there is
+  nothing to guess; sign-up policy, the first-admin rule and disabled
+  accounts apply exactly as for passwords.
+- 15 tests against a fake GitHub; three of them were each shown to fail when
+  their guard (the state check, the email refusal, the disabled check) was
+  removed. The registered app's keys were checked against GitHub itself: its
+  token endpoint answers `bad_verification_code` for them with a dummy code
+  and `incorrect_client_credentials` with a wrong secret. The full round trip
+  needs a person's GitHub login, so it is the owner's to click through.
+
 ## Known issues / next milestones
 
 - The Pollinations key now has a small pollen budget, so the keyed endpoint
@@ -417,8 +565,6 @@ empty. Use SQLite's backup API (`sqlite3.Connection.backup`) or `VACUUM INTO`.
   files via scripts/get_kokoro.py); edge-tts, gTTS and pyttsx3 are the fallbacks
   and the UI can pick between them. Still deferred: Chatterbox voices and
   ACE-Step music, which do need a ~2-3 GB torch install.
-- Storyboard previews are drawn at 512x288 and thrown away at render time; reusing them as
-  the wide shot would save one image per scene.
 - Snapshots copy every file per version — storage grows quickly (content-addressed storage would fix it).
 - The S3/R2 asset backend is verified against both a local S3 server
   (`python -m moto.server`) and **real Cloudflare R2**, bucket
@@ -430,6 +576,15 @@ empty. Use SQLite's backup API (`sqlite3.Connection.backup`) or `VACUUM INTO`.
 - Two workers on one laptop contend for CPU; concurrency helps across hosts.
 - No password reset by email (no mail service at $0) — `python main.py users
   passwd <email>` is the recovery path, which suits a self-hosted deployment.
-- No OAuth or two-factor; sessions are not yet listed and revokable per device
-  in the UI, though the API and the data model both support it.
-- Scene-scoped voice edits apply to that scene only until a later global audio edit re-renders it.
+- No two-factor; sessions are not yet listed and revokable per device in the
+  UI, though the API and the data model both support it.
+- GitHub can be connected but not disconnected from the UI yet (an account
+  made through GitHub has no password, so disconnecting needs a set-password
+  step first). GitHub's callback must match the registered URL exactly:
+  open the app at `http://localhost:8000`, not `127.0.0.1`, or pin
+  `GITHUB_CALLBACK_URL`.
+- An edit that rewrites the script starts its voices fresh (scene 2 is a
+  different scene afterwards); only the voice engine carries over.
+- Versions saved by a revert before M8 carry the wrong `version` inside their
+  state (the number they went back to). History order is unaffected and the
+  next save numbers correctly; nothing rewrites the old records.

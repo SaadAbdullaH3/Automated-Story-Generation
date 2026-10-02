@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
@@ -137,7 +138,8 @@ class VideoAgent:
             frames = run_jobs(
                 [(self._generate_scene_frame,
                   (state.project_id, scene, width, height, fps, use_text_to_video,
-                   state.script.story))
+                   state.script.story,
+                   self.reusable_preview(state, scene, width, height)))
                  for scene in state.script.scenes],
                 workers=providers.concurrency("image"), label="scene images",
             )
@@ -278,8 +280,10 @@ class VideoAgent:
         return CharacterPortrait(character_id=c.id,
                                  image_path=_ensure_image(res, out, prompt, width, height))
 
-    def generate_storyboard(self, state: PipelineState, width: int = 512, height: int = 288,
-                            scene_ids: Optional[List[str]] = None) -> Storyboard:
+    def generate_storyboard(self, state: PipelineState, width: int = DEFAULT_WIDTH,
+                            height: int = DEFAULT_HEIGHT,
+                            scene_ids: Optional[List[str]] = None,
+                            on_frame: Optional[Any] = None) -> Storyboard:
         """One small preview image per scene, for approval before the real render.
 
         A preview costs a single image; a full render costs three per scene plus
@@ -296,9 +300,17 @@ class VideoAgent:
         # (a text-only edit shouldn't spend images).
         targets = [s for s in script.scenes
                    if scene_ids is None or s.scene_id in scene_ids]
+        def draw(scene: Scene) -> str:
+            path = self._generate_preview(state.project_id, scene, width, height,
+                                          script.story)
+            # Each frame is reported the moment it exists, so the interface can
+            # fill the storyboard in scene by scene rather than all at the end.
+            if on_frame is not None:
+                on_frame(scene, path)
+            return path
+
         previews = run_jobs(
-            [(self._generate_preview, (state.project_id, scene, width, height, script.story))
-             for scene in targets],
+            [(draw, (scene,)) for scene in targets],
             workers=providers.concurrency("image"), label="storyboard previews",
         )
         preview_by_scene = dict(zip([s.scene_id for s in targets], previews))
@@ -311,6 +323,10 @@ class VideoAgent:
                 setting=scene.setting, visual_prompt=scene.visual_prompt,
                 preview_path=preview_by_scene.get(
                     scene.scene_id, existing.preview_path if existing else None),
+                preview_signature=(
+                    self.preview_signature(scene, script.story, width, height)
+                    if scene.scene_id in preview_by_scene
+                    else (existing.preview_signature if existing else None)),
                 dialogue=[StoryboardLine(line_id=ln.line_id, character_id=ln.character_id,
                                          character_name=names.get(ln.character_id, ""),
                                          text=ln.text)
@@ -323,6 +339,19 @@ class VideoAgent:
         state.storyboard = board
         state.stage = "storyboard" if state.stage == "draft" else state.stage
         return board
+
+    @staticmethod
+    def preview_signature(scene: Scene, story: Optional[StoryOutput],
+                          width: int, height: int) -> str:
+        """Identifies the image a preview holds.
+
+        The wide shot is generated from exactly this prompt, style and seed, so
+        two signatures matching means the two images would be identical.
+        """
+        style, negative = scene_style(story, scene.tone)
+        prompt = f"{scene.visual_prompt}, {BANK_FRAMINGS[0][1]}"
+        return hashlib.md5(
+            f"{prompt}|{style}|{negative}|{width}x{height}".encode()).hexdigest()
 
     def _generate_preview(self, project_id: str, scene: Scene,
                           width: int, height: int, story: StoryOutput) -> str:
@@ -342,9 +371,14 @@ class VideoAgent:
         return _ensure_image(res, out, prompt, width, height)
 
     def generate_shot_bank(self, project_id: str, scene: Scene, width: int, height: int,
-                           seed_salt: str = "", story: Optional[StoryOutput] = None
-                           ) -> List[str]:
-        """(Re)generate a scene's wide / detail / alt images, in the film's style."""
+                           seed_salt: str = "", story: Optional[StoryOutput] = None,
+                           reusable_preview: Optional[str] = None) -> List[str]:
+        """(Re)generate a scene's wide / detail / alt images, in the film's style.
+
+        `reusable_preview` is the storyboard preview for this scene when it was
+        drawn from the same prompt at the same size — the wide shot would be
+        that identical image, so it is copied rather than generated again.
+        """
         img_dir = project_dir(project_id) / "video" / "frames"
         img_dir.mkdir(parents=True, exist_ok=True)
         style, negative = scene_style(story, scene.tone)
@@ -352,6 +386,13 @@ class VideoAgent:
         for tag, suffix in BANK_FRAMINGS:
             out = img_dir / f"{scene.scene_id}_{tag}.png"
             prompt = f"{scene.visual_prompt}, {suffix}"
+            if (tag == "wide" and not seed_salt and reusable_preview
+                    and Path(reusable_preview).exists()):
+                shutil.copyfile(reusable_preview, out)
+                bank.append(str(out))
+                log.info("  scene %s wide shot -> %s (reused the storyboard preview)",
+                         scene.scene_id, out.name)
+                continue
             res = self.tools.execute(
                 "vision.generate_image", prompt=prompt, out_path=str(out),
                 width=width, height=height, style=style,
@@ -362,10 +403,30 @@ class VideoAgent:
                      res.metadata.get("provider") if res.success else res.error)
         return bank
 
+    def reusable_preview(self, state: PipelineState, scene: Scene,
+                         width: int, height: int) -> Optional[str]:
+        """The storyboard preview for this scene, if it is the same image the
+        wide shot would be.
+
+        It stops matching the moment the scene's visuals, the film's style or
+        the render size change, which is exactly when the shot has to be drawn
+        again anyway.
+        """
+        board = state.storyboard
+        frame = board.frame(scene.scene_id) if board else None
+        if not frame or not frame.preview_path or not frame.preview_signature:
+            return None
+        story = state.script.story if state.script else None
+        if frame.preview_signature != self.preview_signature(scene, story, width, height):
+            return None
+        return frame.preview_path if Path(frame.preview_path).exists() else None
+
     def _generate_scene_frame(self, project_id: str, scene: Scene, width: int, height: int,
                               fps: int, use_text_to_video: bool,
-                              story: Optional[StoryOutput] = None) -> SceneFrame:
-        bank = self.generate_shot_bank(project_id, scene, width, height, story=story)
+                              story: Optional[StoryOutput] = None,
+                              reusable_preview: Optional[str] = None) -> SceneFrame:
+        bank = self.generate_shot_bank(project_id, scene, width, height, story=story,
+                                       reusable_preview=reusable_preview)
         t2v_clip = None
         if use_text_to_video:
             t2v_out = project_dir(project_id) / "video" / "t2v" / f"{scene.scene_id}.mp4"

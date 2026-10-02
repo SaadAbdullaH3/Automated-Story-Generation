@@ -13,8 +13,10 @@ from agents.video_agent import animator, camera
 def test_a_move_is_chosen_for_what_the_shot_is_doing():
     """It used to be a round-robin over a fixed list, so the move had nothing
     to do with what was on screen."""
-    # A face delivering a line: let the performance carry it.
-    assert camera.move_for("lip_sync", "tense", 0) == "static_hold"
+    # A face delivering a line holds still — except in a tense moment, when a
+    # slow push-in tightens on it.
+    assert camera.move_for("lip_sync", "calm", 0) == "static_hold"
+    assert camera.move_for("lip_sync", "tense", 0) == "push_in"
     # An establishing wide opens the space up.
     assert camera.move_for("establishing", "calm", 0) in ("pull_out", "pan_right",
                                                           "drift", "tilt_up")

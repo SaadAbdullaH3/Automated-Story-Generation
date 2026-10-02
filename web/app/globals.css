@@ -1,0 +1,246 @@
+/* ---- tokens --------------------------------------------------------------- */
+:root {
+  /* A cinema surround: warm near-black so the film supplies the colour. */
+  --bg: #0d0c0b;
+  --surface: #171614;
+  --raised: #1f1d1a;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --fg: #f2efe9;
+  --muted: #a39d93;
+  --faint: #6f6960;
+  /* The one accent. Used for the primary action and "something is happening". */
+  --ember: #d98b3a;
+  --ember-hi: #e89c4c;
+  --ember-ink: #1a1206;
+  --danger: #e5675a;
+
+  --title: var(--font-title), Georgia, serif;
+  --ui: var(--font-ui), -apple-system, "Segoe UI", Helvetica, sans-serif;
+  --mono: var(--font-mono), ui-monospace, "SF Mono", monospace;
+
+  --radius: 10px;
+  --radius-sm: 7px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --gutter: clamp(20px, 4vw, 48px);
+}
+
+/* ---- base ----------------------------------------------------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  color-scheme: dark;
+}
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--ui);
+  font-size: 15px;
+  font-weight: 300;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+/* One slow ember light from the top-left. Fixed and inert: it never scrolls,
+   never takes a click. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(72rem 38rem at 14% -12%, rgba(217, 139, 58, 0.075), transparent 64%);
+}
+main {
+  position: relative;
+  z-index: 1;
+}
+img,
+video {
+  display: block;
+  max-width: 100%;
+}
+a {
+  color: inherit;
+}
+::selection {
+  background: rgba(217, 139, 58, 0.35);
+}
+:focus-visible {
+  outline: 2px solid var(--ember);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* ---- type ----------------------------------------------------------------- */
+.title {
+  font-family: var(--title);
+  font-weight: 400;
+  letter-spacing: -0.022em;
+  line-height: 1.08;
+  text-wrap: balance;
+  font-variation-settings: "SOFT" 50, "WONK" 1;
+}
+.label {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.meta {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- controls ------------------------------------------------------------- */
+.btn {
+  font: inherit;
+  font-family: var(--ui);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--line);
+  padding: 11px 20px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  transition:
+    border-color 0.18s,
+    background 0.18s,
+    color 0.18s,
+    transform 0.1s;
+}
+.btn:hover {
+  border-color: var(--line-strong);
+}
+.btn:active {
+  transform: scale(0.985);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
+}
+.btn.primary {
+  background: var(--ember);
+  border-color: var(--ember);
+  color: var(--ember-ink);
+  font-weight: 600;
+}
+.btn.primary:hover:not(:disabled) {
+  background: var(--ember-hi);
+  border-color: var(--ember-hi);
+}
+.btn.quiet {
+  border-color: transparent;
+  color: var(--muted);
+  padding-inline: 10px;
+}
+.btn.quiet:hover {
+  color: var(--fg);
+  border-color: transparent;
+}
+.btn.small {
+  padding: 7px 13px;
+  font-size: 13px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.input,
+.select,
+.textarea {
+  font: inherit;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  transition: border-color 0.18s;
+}
+.input:hover,
+.select:hover,
+.textarea:hover {
+  border-color: var(--line-strong);
+}
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--ember);
+}
+.select {
+  appearance: none;
+  padding-right: 32px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) 52%,
+    calc(100% - 11px) 52%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.pip {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ember);
+  flex: none;
+  animation: pip 1.6s ease-in-out infinite;
+}
+@keyframes pip {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.page {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 0 var(--gutter) 96px;
+}
+
+/* Entrances: content rises a little and settles. Never everything at once. */
+.rise {
+  opacity: 0;
+  transform: translateY(12px);
+  animation: rise 0.6s var(--ease) forwards;
+  animation-delay: var(--delay, 0ms);
+}
+@keyframes rise {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .rise {
+    opacity: 1;
+    transform: none;
+  }
+}

@@ -120,19 +120,26 @@ def canonical_tone(tone: str) -> str:
 def move_for(shot_kind: str, tone: str = "", index: int = 0) -> str:
     """Pick a camera move that suits the shot and the moment.
 
-    Round-robin over a fixed list is what this replaced: the move now comes
-    from what the shot is doing, so a tense close-up pushes in and an
-    establishing wide pulls back.
+    The video agent only ever makes three kinds of shot — `establishing` (a
+    scene's opening and its narration), `character` and `lip_sync` — so tone
+    has to act on those. An earlier version routed all three to fixed lists and
+    only consulted the tone for kinds the agent never produced, which meant the
+    scene's mood never reached the camera in a real render.
+
+    Establishing shots carry the scene's feel. A face delivering a line holds
+    still and lets the performance work — unless the moment is tense, when a
+    slow push-in tightens on them.
     """
     kind = (shot_kind or "").lower()
+    mood = canonical_tone(tone)
     if kind in ("lip_sync", "character", "dialogue"):
-        options = DIALOGUE_MOVES
+        options = ["push_in", "static_hold"] if mood in ("tense", "uneasy") else DIALOGUE_MOVES
+    elif mood:
+        options = TONE_MOVES[mood]
     elif kind in ("establishing", "wide"):
         options = ESTABLISHING_MOVES
     else:
-        options = TONE_MOVES.get(canonical_tone(tone), [])
-        if not options:
-            options = ["drift", "push_in", "static_hold", "pan_right"]
+        options = ["drift", "push_in", "static_hold", "pan_right"]
     return options[index % len(options)]
 
 

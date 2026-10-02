@@ -15,15 +15,20 @@ from mcp.tools.vision_tools.image_edit_tool import list_filter_names
 from shared.schemas.edit import EditIntent
 from shared.utils.logging import get_logger
 
+from .vocabulary import (EDITS, UNCLEAR, EditDraft, describe_for_model, draft_parameters,
+                         missing, normalise_scope)
+
 log = get_logger("intent_classifier")
 
 
 # (keyword regex, intent, target, parameters_extractor)
 _RULES: List[Tuple[re.Pattern, str, str, str]] = [
     # Audio --------------------------------------------------------------
-    (re.compile(r"\b(voice|tone|speak|narrat)\b.*\b(tone|whisper|deep|cheer|warm|angry|softer|louder)\b", re.I),
+    # Inflections count: "voices", "narrator", "whispered", "deeper", "warmer".
+    (re.compile(r"\b(voices?|tone|speak\w*|narrat\w*)\b.*"
+                r"\b(tone|whisper\w*|deep(er)?|cheer\w*|warm(er)?|angry|softer|louder)\b", re.I),
      "change_voice_tone", "audio", "tone"),
-    (re.compile(r"\b(change|set|make).*\bvoice\b", re.I),
+    (re.compile(r"\b(change|set|make).*\bvoices?\b", re.I),
      "change_voice", "audio", "voice"),
     (re.compile(r"\b(louder|quieter|volume|softer)\b", re.I),
      "adjust_volume", "audio", "volume"),
@@ -69,7 +74,7 @@ _FILTER_NAMES = sorted(list_filter_names(), key=lambda n: (-len(n), n))
 
 _TONES = {
     "whisper": "whispered", "whispered": "whispered",
-    "deep": "deep", "warm": "warm", "cheerful": "cheerful",
+    "deep": "deep", "warm": "warm", "cheer": "cheerful",
     "angry": "angry", "sad": "sad", "anxious": "anxious",
     "soft": "soft", "loud": "loud",
 }
@@ -80,31 +85,24 @@ _MOODS = {
 }
 
 
-SYSTEM_PROMPT = """You classify a user's free-text video-editing request into a
-structured intent. Always reply with one valid JSON object matching the schema.
-
-Targets:
-- "audio"        : edits to TTS narration, voice, or background music
-- "video_frame"  : edits to one or more scene images (filters, regen)
-- "video"        : edits to the whole video (subtitles, speed, recompose)
-- "script"       : edits that require regenerating the story
-"""
+SYSTEM_PROMPT = """You turn a creator's request to change their short animated film
+into one edit the editor can carry out. Only the intents and values listed are
+possible; never invent new ones. If the request matches none, use "unclear".
+Always reply with one valid JSON object."""
 
 
-CLASSIFICATION_PROMPT = """User edit query: "{query}"
+CLASSIFICATION_PROMPT = """Request: "{query}"
 
-Available scenes: {scenes}
-Available characters: {chars}
+Scenes: {scenes}
+Characters: {chars}
 
-Return a JSON object:
-{{
-  "intent": "<short snake_case action name>",
-  "target": "audio|video_frame|video|script",
-  "scope": "global | scene:<id> | character:<id>",
-  "parameters": {{ ... }},
-  "confidence": 0.0-1.0,
-  "reasoning": "<one sentence>"
-}}
+Fill in this form as one JSON object with exactly the keys intent, scope, tone,
+volume, mood, filter, aesthetic, factor, genre, reasoning.
+
+{form}
+scope — "global", "scene:<scene id>" or "character:<character id>": the part of
+the film the request is about.
+reasoning — one short sentence.
 """
 
 
@@ -116,35 +114,63 @@ class IntentClassifier:
 
     def classify(self, query: str, scenes: List[str] | None = None,
                  characters: List[str] | None = None,
-                 character_names: Dict[str, str] | None = None) -> EditIntent:
+                 character_names: Dict[str, str] | None = None,
+                 scene_titles: Dict[str, str] | None = None) -> EditIntent:
         """`characters` are ids (char_protagonist); `character_names` maps id -> name
         (Aria) so users can refer to characters the way the story does."""
         names = character_names or {}
-        # LLM path first if available; else keyword fallback.
-        if self.llm.provider != "mock":
-            try:
-                return self._llm_classify(query, scenes or [], characters or [], names)
-            except Exception as e:  # noqa: BLE001
-                log.warning("LLM intent classification failed (%s) — using keyword fallback", e)
-        return self._keyword_classify(query, scenes or [], characters or [], names)
+        scenes, characters = scenes or [], characters or []
+        keyword = self._keyword_classify(query, scenes, characters, names)
+        if self.llm.provider == "mock":
+            return keyword
+        try:
+            intent = self._llm_classify(query, scenes, characters, names, scene_titles or {})
+        except Exception as e:  # noqa: BLE001
+            log.warning("LLM intent classification failed (%s) — using keyword fallback", e)
+            return keyword
+        if intent.intent == UNCLEAR or missing(intent.intent, intent.parameters):
+            # The keyword rules sometimes catch what the model gave up on.
+            if keyword.intent in EDITS and not missing(keyword.intent, keyword.parameters):
+                log.info("model answered %s; keyword rules found %s", intent.intent,
+                         keyword.intent)
+                return keyword
+        return intent
 
     # ---- LLM path --------------------------------------------------------
 
-    def _llm_classify(self, query: str, scenes: List[str],
-                      characters: List[str], names: Dict[str, str]) -> EditIntent:
+    def _llm_classify(self, query: str, scenes: List[str], characters: List[str],
+                      names: Dict[str, str], titles: Dict[str, str]) -> EditIntent:
         chars = ", ".join(f"{c} ({names[c]})" if c in names else c for c in characters)
         prompt = CLASSIFICATION_PROMPT.format(
             query=query,
-            scenes=", ".join(scenes) or "scene_1, scene_2, scene_3, scene_4",
+            scenes=", ".join(f"{s} ({titles[s]})" if s in titles else s for s in scenes)
+            or "scene_1, scene_2, scene_3, scene_4",
             chars=chars or "char_narrator, char_protagonist, char_supporting",
+            form=describe_for_model(),
         )
-        intent = self.llm.generate_structured(
+        draft = self.llm.generate_structured(
             prompt=prompt,
-            schema=EditIntent,
+            schema=EditDraft,
             system=SYSTEM_PROMPT,
-            temperature=0.2,
+            temperature=0.1,
         )
-        return intent
+        return self.from_draft(draft, scenes, characters, names)
+
+    @staticmethod
+    def from_draft(draft: EditDraft, scenes: List[str], characters: List[str],
+                   names: Dict[str, str]) -> EditIntent:
+        """The model's form, in the names the planner and executor read."""
+        if draft.intent == UNCLEAR:
+            return EditIntent(intent=UNCLEAR, target="video", scope="global",
+                              confidence=0.3, reasoning=draft.reasoning)
+        return EditIntent(
+            intent=draft.intent,
+            target=EDITS[draft.intent].target,
+            scope=normalise_scope(draft.scope, scenes, characters, names),
+            parameters=draft_parameters(draft),
+            confidence=0.85,
+            reasoning=draft.reasoning,
+        )
 
     # ---- keyword path ----------------------------------------------------
 
@@ -248,5 +274,6 @@ class IntentClassifier:
 
 
 # Convenience function for tests.
-def classify(query: str, scenes=None, characters=None, character_names=None) -> EditIntent:
-    return IntentClassifier().classify(query, scenes, characters, character_names)
+def classify(query: str, scenes=None, characters=None, character_names=None,
+             scene_titles=None) -> EditIntent:
+    return IntentClassifier().classify(query, scenes, characters, character_names, scene_titles)

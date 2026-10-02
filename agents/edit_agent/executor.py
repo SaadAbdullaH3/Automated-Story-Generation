@@ -51,54 +51,76 @@ class EditExecutor:
     # ---- audio handlers --------------------------------------------------
 
     def _step_rerun_audio(self, state: PipelineState, step: EditStep) -> List[str]:
-        voice_params = {k: v for k, v in (step.params or {}).items()
-                        if k in ("tone", "volume", "voice")}
-        if not state.audio or (step.scope == "global" and not voice_params):
-            # Full regeneration (e.g. after the script changed).
-            with_bgm = state.audio.bgm_enabled if state.audio else True
-            self.audio.run(state, with_bgm=with_bgm)
+        """Re-record the lines an edit touches, each in the voice it has now.
+
+        Edits compose in the order they were made: a scene's own voice (from a
+        scene-scoped edit) is kept in `audio.scene_voices`, and later character
+        or global edits adjust it as well as the character's voice — so "make
+        scene 2 whisper" then "make everyone louder" leaves scene 2 whispering,
+        louder.
+        """
+        voice_params = self.audio.normalise_voice_params(
+            {k: v for k, v in (step.params or {}).items() if k in ("tone", "volume", "voice")})
+        audio = state.audio
+        if not audio or self._script_lines_changed(state):
+            # The lines themselves are new (the script was rewritten), so there
+            # is nothing to keep but the engine the film was recorded with.
+            engine = audio.voice_configs[0].engine if audio and audio.voice_configs else None
+            self.audio.run(state, with_bgm=audio.bgm_enabled if audio else True,
+                           tts_engine=engine)
             return list(state.phase2.artifact_paths)
 
         characters = {c.id: c for c in state.script.characters.characters}
-        configs: Dict[str, VoiceConfig] = {v.character_id: v for v in state.audio.voice_configs}
+        base: Dict[str, VoiceConfig] = {v.character_id: v for v in audio.voice_configs}
+        lines = [s for s in audio.manifest.segments if s.kind == "dialogue"]
         if step.scope.startswith("character:"):
             char_id = step.scope.split(":", 1)[1]
-            if char_id not in configs:
+            if char_id not in base:
                 raise ValueError(f"unknown character '{char_id}'")
-            self.audio.apply_voice_params(configs[char_id], voice_params, characters.get(char_id))
-            targets = {s.line_id for s in state.audio.manifest.segments
-                       if s.character_id == char_id}
-            line_configs = configs
+            targets = [s for s in lines if s.character_id == char_id]
+            voices = [base[char_id]] + [own[char_id] for own in audio.scene_voices.values()
+                                        if char_id in own]
         elif step.scope.startswith("scene:"):
             scene_id = step.scope.split(":", 1)[1]
-            targets = {s.line_id for s in state.audio.manifest.segments if s.scene_id == scene_id}
+            targets = [s for s in lines if s.scene_id == scene_id]
             if not targets:
                 raise ValueError(f"scene '{scene_id}' has no dialogue")
-            # Scene-scoped voice changes apply to this scene's lines only, so use
-            # adjusted copies instead of changing each character's voice everywhere.
-            line_configs = {}
-            for cid, cfg in configs.items():
-                copy = cfg.model_copy()
-                self.audio.apply_voice_params(copy, voice_params, characters.get(cid))
-                line_configs[cid] = copy
-        else:  # global with voice params
-            for cid, cfg in configs.items():
-                self.audio.apply_voice_params(cfg, voice_params, characters.get(cid))
-            targets = {s.line_id for s in state.audio.manifest.segments if s.kind == "dialogue"}
-            line_configs = configs
+            voices = []
+            if voice_params:
+                # This scene gets voices of its own, starting from how its
+                # speakers sound now, so other scenes are untouched.
+                own = audio.scene_voices.setdefault(scene_id, {})
+                for cid in sorted({s.character_id for s in targets if s.character_id in base}):
+                    own.setdefault(cid, base[cid].model_copy())
+                    voices.append(own[cid])
+        else:
+            targets = lines
+            voices = list(base.values()) + [cfg for own in audio.scene_voices.values()
+                                            for cfg in own.values()]
+        if voice_params:
+            for cfg in voices:
+                self.audio.apply_voice_params(cfg, voice_params,
+                                              characters.get(cfg.character_id))
 
         affected: List[str] = []
-        for seg in state.audio.manifest.segments:
-            if seg.kind != "dialogue" or seg.line_id not in targets:
-                continue
+        for seg in targets:
             path, dur = self.audio.render_line(
                 state.project_id, seg.scene_id, seg.line_id, seg.text or "",
-                line_configs.get(seg.character_id), fallback_ms=seg.duration_ms,
+                audio.voice_for(seg.scene_id, seg.character_id), fallback_ms=seg.duration_ms,
             )
             seg.file_path, seg.duration_ms = path, dur
             affected.append(path)
         self._rebuild_audio(state)
         return affected + [state.audio.master_track]
+
+    @staticmethod
+    def _script_lines_changed(state: PipelineState) -> bool:
+        """Whether the script's lines differ from the ones that were recorded."""
+        recorded = {(s.scene_id, s.line_id, s.text) for s in state.audio.manifest.segments
+                    if s.kind == "dialogue"}
+        written = {(scene.scene_id, ln.line_id, ln.text)
+                   for scene in state.script.scenes for ln in scene.dialogue}
+        return recorded != written
 
     def _step_regenerate_bgm(self, state: PipelineState, step: EditStep) -> List[str]:
         if not state.audio or not state.script:

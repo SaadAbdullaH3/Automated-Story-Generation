@@ -84,6 +84,18 @@ sessions = Table(
     Index("idx_sessions_expiry", "expires_at"),
 )
 
+# Sign-ins from elsewhere (GitHub), each joined to one account. Keyed by the
+# provider's own id: a login can be renamed, an id can't.
+identities = Table(
+    "identities", metadata,
+    Column("provider", String(32), primary_key=True),
+    Column("subject", String(128), primary_key=True),
+    Column("user_id", String(64), nullable=False),
+    Column("login", String(128)),
+    Column("created_at", DateTime, nullable=False),
+    Index("idx_identities_user", "user_id"),
+)
+
 projects = Table(
     "projects", metadata,
     Column("project_id", String(64), primary_key=True),

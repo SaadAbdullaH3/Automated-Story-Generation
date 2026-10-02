@@ -1,12 +1,15 @@
-"""Sign up, sign in, sign out, and who am I."""
+"""Sign up, sign in (with a password or GitHub), sign out, and who am I."""
 from __future__ import annotations
 
 from typing import Optional
+from urllib.parse import urlencode
 
+import requests
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from auth import accounts, sessions
+from auth import accounts, github, sessions
 from auth.accounts import AuthError, User
 from auth.deps import current_user, require_admin, require_user
 from auth.passwords import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
@@ -53,6 +56,10 @@ def status(user: Optional[User] = Depends(current_user)):
         "needs_setup": accounts.count() == 0,
         "signups_allowed": accounts.signups_allowed(),
         "min_password_length": MIN_PASSWORD_LENGTH,
+        "github": {
+            "enabled": github.enabled(),
+            "connected": bool(user) and github.PROVIDER in accounts.identities_for(user.id),
+        },
     }
 
 
@@ -112,6 +119,72 @@ def change_password(body: PasswordChange, request: Request, response: Response,
     sessions.revoke_all(user.id)
     _start_session(response, user, request)   # keep this device signed in
     return {"ok": True, "other_sessions_ended": True}
+
+
+# ---- GitHub ------------------------------------------------------------------
+
+def _back_to_app(request: Request, **outcome: str) -> RedirectResponse:
+    """Return the browser to the app, saying how it went, and forget the state."""
+    res = RedirectResponse("/" + (f"?{urlencode(outcome)}" if outcome else ""), status_code=303)
+    res.delete_cookie(github.STATE_COOKIE, path=github.STATE_COOKIE_PATH)
+    return res
+
+
+@router.get("/github/start")
+def github_start(request: Request, mode: str = "signin",
+                 user: Optional[User] = Depends(current_user)):
+    """Send the browser to GitHub, remembering a state only this browser holds."""
+    if not github.enabled():
+        raise HTTPException(404, "GitHub sign-in is not set up on this deployment")
+    if mode not in github.MODES:
+        raise HTTPException(400, f"unknown mode {mode!r}")
+    if mode == "connect" and user is None:
+        return _back_to_app(request, auth_error="sign in first, then connect GitHub")
+    state = github.new_state(mode)
+    res = RedirectResponse(
+        github.authorize_url(state, github.callback_url(str(request.base_url))),
+        status_code=302)
+    res.set_cookie(github.STATE_COOKIE, state, max_age=github.STATE_TTL_S, httponly=True,
+                   samesite="lax", path=github.STATE_COOKIE_PATH,
+                   secure=sessions.cookie_kwargs(request.url.scheme)["secure"])
+    return res
+
+
+@router.get("/github/callback")
+def github_callback(request: Request, code: str = "", state: str = "", error: str = "",
+                    user: Optional[User] = Depends(current_user)):
+    """GitHub sends the browser back here. Every outcome lands on the app's
+    front page; a failure says why, and nothing is signed in."""
+    if not github.enabled():
+        raise HTTPException(404, "GitHub sign-in is not set up on this deployment")
+    if error:
+        return _back_to_app(request, auth_error=(
+            "GitHub sign-in was cancelled" if error == "access_denied"
+            else f"GitHub refused the sign-in ({error})"))
+    expected = request.cookies.get(github.STATE_COOKIE)
+    if not github.states_match(expected, state):
+        # Checked before the code is spent: a forged callback costs nothing.
+        return _back_to_app(request, auth_error=(
+            "that sign-in link expired or wasn't started here — try again"))
+    try:
+        token = github.exchange_code(code, github.callback_url(str(request.base_url)))
+        gh = github.fetch_user(token)
+        if github.mode_of(expected) == "connect":
+            if user is None:
+                return _back_to_app(request, auth_error="sign in first, then connect GitHub")
+            accounts.connect_identity(user, github.PROVIDER, gh.id, gh.login)
+            return _back_to_app(request, connected=github.PROVIDER)
+        signed_in = accounts.sign_in_external(github.PROVIDER, gh.id, gh.login, gh.email)
+    except (github.GitHubError, AuthError) as e:
+        return _back_to_app(request, auth_error=str(e))
+    except requests.RequestException:
+        log.warning("GitHub could not be reached during sign-in", exc_info=True)
+        return _back_to_app(request, auth_error="couldn't reach GitHub — try again")
+
+    res = _back_to_app(request)
+    _start_session(res, signed_in, request)
+    log.info("signed in through GitHub: %s (%s)", signed_in.email, gh.login)
+    return res
 
 
 @router.get("/sessions")

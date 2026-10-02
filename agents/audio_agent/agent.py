@@ -74,6 +74,13 @@ TONE_PRESETS: Dict[str, Dict[str, Any]] = {
     "angry":     {"rate": 190, "pitch": 4, "volume": 1.2},
     "loud":      {"rate": 175, "pitch": 0, "volume": 1.3},
 }
+# The words people (and writing models) use for those tones.
+TONE_ALIASES = {
+    "whisper": "whispered", "whispering": "whispered", "whispery": "whispered",
+    "softer": "soft", "gentle": "soft", "deeper": "deep", "warmer": "warm",
+    "happy": "cheerful", "cheery": "cheerful", "cheer": "cheerful",
+    "nervous": "anxious", "louder": "loud", "sadder": "sad",
+}
 
 
 class AudioAgent:
@@ -223,9 +230,27 @@ class AudioAgent:
         return out
 
     @staticmethod
-    def apply_voice_params(cfg: VoiceConfig, params: Dict[str, Any],
+    def normalise_voice_params(params: Dict[str, Any]) -> Dict[str, Any]:
+        """An edit's voice parameters with the tone resolved to a known preset.
+
+        An unknown tone raises rather than relabelling the voice and recording
+        the lines exactly as before, which used to report success.
+        """
+        out = dict(params)
+        tone = str(out.get("tone") or "").strip().lower()
+        if tone:
+            tone = TONE_ALIASES.get(tone, tone)
+            if tone not in TONE_PRESETS:
+                raise ValueError(f"unknown voice tone '{params['tone']}' "
+                                 f"(known: {', '.join(TONE_PRESETS)})")
+            out["tone"] = tone
+        return out
+
+    @classmethod
+    def apply_voice_params(cls, cfg: VoiceConfig, params: Dict[str, Any],
                            character: Optional[Character] = None) -> None:
         """Apply an edit's voice parameters (tone / volume / voice) to a config."""
+        params = cls.normalise_voice_params(params)
         tone = params.get("tone")
         if tone:
             preset = TONE_PRESETS.get(tone, {})
@@ -347,6 +372,8 @@ class AudioAgent:
             "phase": PHASE_AUDIO,
             "status": "complete",
             "voice_configs": [v.model_dump(mode="json") for v in output.voice_configs],
+            "scene_voices": {scene: {cid: v.model_dump(mode="json") for cid, v in voices.items()}
+                             for scene, voices in output.scene_voices.items()},
             "segment_count": len(output.manifest.segments),
             "total_duration_ms": output.manifest.total_duration_ms,
             "bgm_track": output.bgm_track,

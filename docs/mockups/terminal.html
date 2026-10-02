@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>AGENTIC VIDEO GENERATOR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0A0A0A; --panel:#121212; --fg:#EAEAEA; --dim:#6E6E6E; --line:#2A2A2A;
+    --red:#E61919; --green:#4AF626;
+    --mono:"JetBrains Mono",ui-monospace,"SF Mono",monospace;
+    --macro:"Archivo Black",Impact,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--fg); font-family:var(--mono);
+    font-size:12px; line-height:1.4; letter-spacing:.04em; text-transform:uppercase;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* CRT sweep + mechanical grain, fixed, never on a scrolling container */
+  body::after{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:9;
+    background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.22) 2px,rgba(0,0,0,.22) 3px);
+  }
+  body::before{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:8; opacity:.035;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/></filter><rect width='120' height='120' filter='url(%23n)'/></svg>");
+  }
+  .wrap{max-width:1180px; margin:0 auto; padding:0 24px 80px; position:relative; z-index:1;}
+
+  /* ---- masthead ---- */
+  .bar{display:flex; align-items:center; gap:14px; padding:14px 0; border-bottom:2px solid var(--fg);}
+  .bar .id{color:var(--red); font-weight:700;}
+  .bar .spacer{flex:1}
+  .bar .meta{color:var(--dim); font-size:10px;}
+
+  h1{
+    font-family:var(--macro); font-size:clamp(3rem,9vw,7.5rem); line-height:.86;
+    letter-spacing:-.045em; margin:34px 0 0; text-transform:uppercase;
+  }
+  .sub{display:flex; gap:18px; border-top:1px solid var(--line); border-bottom:1px solid var(--line);
+       margin:22px 0 28px; padding:9px 0; color:var(--dim); font-size:10px; flex-wrap:wrap;}
+  .sub b{color:var(--fg); font-weight:500;}
+
+  /* ---- hairline grid: gap 1px over a line-coloured parent ---- */
+  .grid{display:grid; gap:1px; background:var(--line); border:1px solid var(--line); margin-bottom:1px;}
+  .g-2{grid-template-columns:1.6fr 1fr;}
+  .g-4{grid-template-columns:repeat(4,1fr);}
+  .cell{background:var(--bg); padding:18px 20px;}
+  .cell.panel{background:var(--panel);}
+  .k{color:var(--dim); font-size:10px; margin-bottom:9px;}
+  .v{font-size:13px;}
+  .big{font-family:var(--macro); font-size:30px; letter-spacing:-.02em; line-height:1;}
+
+  /* ---- composer ---- */
+  .composer{border:1px solid var(--line); padding:20px; margin-bottom:1px; background:var(--panel);}
+  .composer .k{margin-bottom:12px;}
+  .composer textarea{
+    width:100%; border:0; outline:0; resize:none; background:transparent; color:var(--fg);
+    font-family:var(--mono); font-size:16px; letter-spacing:.02em; text-transform:none; line-height:1.45;
+  }
+  .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:16px;
+       border-top:1px solid var(--line); padding-top:14px;}
+  .chip{border:1px solid var(--line); padding:5px 10px; color:var(--dim); font-size:10px;}
+  .chip b{color:var(--fg); font-weight:500;}
+  .row .spacer{flex:1}
+  button{
+    font-family:var(--mono); font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+    background:transparent; color:var(--fg); border:1px solid var(--fg); padding:8px 16px;
+    cursor:pointer; border-radius:0; transition:background .12s,color .12s;
+  }
+  button:hover{background:var(--fg); color:var(--bg);}
+  button.go{background:var(--red); border-color:var(--red); color:#fff; font-weight:700;}
+  button.go:hover{background:#ff2a2a; color:#fff;}
+
+  /* ---- telemetry ---- */
+  table{width:100%; border-collapse:collapse;}
+  td{padding:9px 0; border-bottom:1px solid var(--line); font-size:11.5px;}
+  tr:last-child td{border-bottom:0;}
+  td.r{text-align:right; color:var(--dim); font-variant-numeric:tabular-nums;}
+  .ok{color:var(--green);}
+  .run{color:var(--red);}
+  .meter{height:6px; background:#1C1C1C; border:1px solid var(--line); margin-top:12px;}
+  .meter i{display:block; height:100%; width:68%; background:var(--red);}
+
+  .still{display:block; width:100%; aspect-ratio:16/9; object-fit:cover;
+         filter:grayscale(.25) contrast(1.06); border:1px solid var(--line);}
+  .cross{color:var(--red);}
+  .foot{display:flex; gap:16px; color:var(--dim); font-size:10px;
+        border-top:2px solid var(--fg); margin-top:1px; padding-top:12px; flex-wrap:wrap;}
+  .foot .spacer{flex:1}
+  @media(max-width:900px){.g-2,.g-4{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="bar">
+    <span class="id">[ AVG ]</span>
+    <span>AGENTIC VIDEO GENERATOR</span>
+    <span class="spacer"></span>
+    <span class="meta">SAAD@EXAMPLE.COM / ADMIN</span>
+    <span class="meta">REV 2.7</span>
+  </div>
+
+  <h1>HOURS OF<br/>THE FLOOD</h1>
+  <div class="sub">
+    <span>UNIT <b>20261001_174351</b></span>
+    <span>///</span>
+    <span>LEN <b>20.6S</b></span>
+    <span>FRAMES <b>495/495</b></span>
+    <span>SYNC <b class="ok">EXACT</b></span>
+    <span>1280×720 <b>24FPS</b></span>
+    <span>SUBS <b>URD · ENG</b></span>
+    <span class="spacer" style="flex:1"></span>
+    <span class="cross">+</span>
+  </div>
+
+  <div class="composer">
+    <div class="k">&gt;&gt;&gt; INPUT / PROMPT</div>
+    <textarea rows="2">A clockmaker in a flooded city repairs the hours people lose</textarea>
+    <div class="row">
+      <span class="chip">LEN <b>24S</b></span>
+      <span class="chip">SCENES <b>3</b></span>
+      <span class="chip">VOICE <b>KOKORO/HEART</b></span>
+      <span class="chip">SUBS <b>URDU</b></span>
+      <span class="spacer"></span>
+      <button>PLAN</button>
+      <button class="go">EXECUTE</button>
+    </div>
+  </div>
+
+  <div class="grid g-4">
+    <div class="cell panel"><div class="k">STORY</div><div class="big ok">OK</div><div class="k" style="margin:8px 0 0">1.2S · GEMINI</div></div>
+    <div class="cell panel"><div class="k">AUDIO</div><div class="big ok">OK</div><div class="k" style="margin:8px 0 0">12.4S · KOKORO</div></div>
+    <div class="cell panel"><div class="k">VIDEO</div><div class="big run">68%</div><div class="k" style="margin:8px 0 0">41.0S · SCENE 2/3</div></div>
+    <div class="cell panel"><div class="k">WORKER</div><div class="big">:2</div><div class="k" style="margin:8px 0 0">JOB_4F79</div></div>
+  </div>
+
+  <div class="grid g-2">
+    <div class="cell">
+      <div class="k">&lt; FRAME 0001 / SCENE_1_WIDE &gt;</div>
+      <img class="still" src="f1.jpg" alt="A flooded street at dawn"/>
+      <div class="meter"><i></i></div>
+      <table style="margin-top:16px">
+        <tr><td>SCENE_1 / MORNING FLOOD</td><td class="r">MELANCHOLIC · PULL_OUT</td><td class="r ok">RENDERED</td></tr>
+        <tr><td>SCENE_2 / REPAIRING TIME</td><td class="r">TENSE · PUSH_IN</td><td class="r run">ACTIVE</td></tr>
+        <tr><td>SCENE_3 / RESTORED HOURS</td><td class="r">JOYFUL · TILT_UP</td><td class="r">QUEUED</td></tr>
+      </table>
+    </div>
+
+    <div class="cell">
+      <div class="k">[ PROVIDER CHAIN ]</div>
+      <table>
+        <tr><td>SCRIPT</td><td class="r">GEMINI-FLASH</td></tr>
+        <tr><td>IMAGE</td><td class="r">POLLINATIONS</td></tr>
+        <tr><td>VOICE</td><td class="r">KOKORO</td></tr>
+        <tr><td>MOTION</td><td class="r">FFMPEG/3X</td></tr>
+      </table>
+
+      <div class="k" style="margin:22px 0 9px">[ CAST ]</div>
+      <table>
+        <tr><td>ELI THE CLOCKMAKER</td><td class="r">AM_MICHAEL</td></tr>
+        <tr><td>MIRA</td><td class="r">AF_NICOLE</td></tr>
+        <tr><td>GRANDMA LIRA</td><td class="r">BF_EMMA</td></tr>
+        <tr><td>NARRATOR</td><td class="r">BM_GEORGE</td></tr>
+      </table>
+
+      <div class="k" style="margin:22px 0 9px">[ ARCHIVE ]</div>
+      <table>
+        <tr><td>HOURS OF THE FLOOD</td><td class="r">V1</td></tr>
+        <tr><td>GHOST STATIONS</td><td class="r">V3</td></tr>
+        <tr><td>THE WEATHER GARDENER</td><td class="r">V1</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span>© AVG</span><span>///</span><span>UNIT D-01</span>
+    <span class="spacer"></span>
+    <span>274 TESTS PASSING</span><span>COST $0.00</span><span class="cross">+</span>
+  </div>
+</div>
+</body>
+</html>
