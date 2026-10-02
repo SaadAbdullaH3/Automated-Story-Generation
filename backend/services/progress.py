@@ -31,6 +31,9 @@ def snapshot(project_id: str) -> Optional[Dict[str, Any]]:
         "project_id": project_id,
         "job_id": job.id,
         "kind": job.kind,
+        # What was asked for — known before the script exists, so the studio
+        # can show the sentence immediately instead of a placeholder.
+        "prompt": (job.payload or {}).get("prompt"),
         "status": job.status,
         "phase": last.get("phase") or ("queued" if job.status == "queued" else job.kind),
         "progress": last.get("progress", 0.0),

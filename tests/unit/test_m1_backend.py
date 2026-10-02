@@ -46,9 +46,11 @@ def test_projects_video_url_handles_windows_paths(isolated_dirs, monkeypatch):
     # back on Linux, where they are not separators at all.
     recorded = str(constants.OUTPUTS_DIR / "pid" / "final_output_multilang.mp4")
     recorded = recorded.replace("/", chr(92))
+    # Shaped like a PipelineState as far as the library listing reads one.
     state = SimpleNamespace(
         script=None, user_prompt="p", version=2, updated_at="now",
-        video=SimpleNamespace(final_video_path=recorded),
+        stage="rendered", storyboard=None,
+        video=SimpleNamespace(final_video_path=recorded, duration_ms=20_000, frames=[]),
     )
     fake_sm = SimpleNamespace(list_projects=lambda: ["pid"], latest=lambda pid: state)
     monkeypatch.setattr(projects, "sm", fake_sm)

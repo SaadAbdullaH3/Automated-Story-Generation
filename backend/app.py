@@ -132,19 +132,41 @@ def serve_asset(project_id: str, asset_path: str, user=Depends(require_user)):
     # FileResponse answers Range requests, so seeking in the player still works.
     return FileResponse(target)
 
-# Frontend — single-page app served from /frontend.
-FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+# ---- the interfaces -----------------------------------------------------------
+# Two UIs during the move: the Next.js app (web/, built to web/out) and the
+# original vanilla page (frontend/src). Whichever is built serves /, and the
+# original stays reachable at /classic/ either way, so nothing is lost while
+# the new one is being finished.
+ROOT_DIR = Path(__file__).resolve().parent.parent
+FRONTEND_DIR = ROOT_DIR / "frontend"
+WEB_DIST = Path(os.getenv("WEB_DIST", str(ROOT_DIR / "web" / "out")))
+
 if (FRONTEND_DIR / "src").exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR / "src")),
               name="static")
 
 
-@app.get("/", response_class=HTMLResponse)
-def index():
+def _classic_page():
     idx = FRONTEND_DIR / "src" / "index.html"
     if idx.exists():
         return FileResponse(idx)
     return HTMLResponse("<h1>Agentic Video Generator</h1><p>Frontend not built.</p>")
+
+
+@app.get("/classic/", response_class=HTMLResponse)
+def classic():
+    """The original single-page UI, kept while the new one replaces it."""
+    return _classic_page()
+
+
+def web_built() -> bool:
+    return (WEB_DIST / "index.html").is_file()
+
+
+if not web_built():
+    @app.get("/", response_class=HTMLResponse)
+    def index():
+        return _classic_page()
 
 
 @app.get("/health")
@@ -169,3 +191,8 @@ def ready():
         "storage": assets.backend_name(),
         "inline_worker": bool(thread and thread.is_alive()),
     }
+
+
+# Registered last on purpose — see above.
+if web_built():
+    app.mount("/", StaticFiles(directory=str(WEB_DIST), html=True), name="web")

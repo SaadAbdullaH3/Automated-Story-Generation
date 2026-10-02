@@ -50,6 +50,8 @@ python main.py storyboard|restyle|render <pid>     # review, edit, then render
 python scripts/benchmark.py --offline              # fixed prompts, measured
 python main.py providers                   # which providers are detected
 python main.py serve --reload              # web UI on http://localhost:8000 (runs a worker too)
+cd web && npm ci && npm run build          # build the creator UI; serve then uses it at /
+cd web && npm run dev                      # UI with hot reload on :3000, API proxied to :8000
 python main.py worker                      # a worker process on its own (WORKER_INLINE=0 for the API)
 python main.py jobs [--status failed]      # the queue: what ran, what broke
 python main.py users [create <email> --admin | passwd <email> | role <email> admin]
@@ -86,7 +88,9 @@ Outputs go to `data/outputs/<project_id>/`, version snapshots to
 | Voices | `shared/voices.py` + `backend/routes/voices.py` | Which engines work on this machine and why not, their voices, and a cached one-line sample so a voice can be heard before a render. |
 | Fonts | `shared/fonts.py` | Picks an installed font with the script's glyphs (`Segoe UI` on Windows, Noto in the container). A missing font draws nothing rather than failing. |
 | Backend | `backend/` | FastAPI routes, DB-backed progress (`services/progress.py`), WebSocket at `/ws/progress/{pid}`, `/assets` serves `data/outputs`. |
-| Frontend | `frontend/src/` | Vanilla HTML/CSS/JS, no build step, served by FastAPI. |
+| Frontend | `web/` | **The creator interface.** Next.js 16 static export, served by FastAPI at `/` when built. The storyboard is the screen: a plan streams in (script first, then each frame), the creator edits it, renders, and watches with scenes as chapters. See `web/README.md`. |
+| Storyboard cards | `agents/orchestrator/storyboard_view.py` | The single source of a card — tone, camera move, lines and the voice that will speak each — used by both the live plan stream and the storyboard endpoint, so a reload shows exactly what the stream did. |
+| Classic UI | `frontend/src/` | The original vanilla page, kept at `/classic/` while the new one takes over. |
 
 ## Conventions
 
@@ -398,6 +402,57 @@ Three robustness fixes found while verifying:
 Worth knowing operationally: `data/state.db` runs in WAL mode, so copying that
 file alone does **not** copy recent writes — a backup taken with `cp` came back
 empty. Use SQLite's backup API (`sqlite3.Connection.backup`) or `VACUUM INTO`.
+
+## M8 results (2026-10-02, in progress)
+
+Frontend rebuilt as the "creator" design — chosen over an editorial dashboard
+and an industrial terminal (all three are in `docs/mockups/`), because both
+dashboards put the machine in the middle and a content creator doesn't care
+that sync is frame-exact. Next.js 16 static export served by FastAPI: still one
+container, one origin, no CORS. Title face: Fraunces (eight candidates in
+`docs/mockups/fonts.html`).
+
+Verified in a real browser against a copy of the real database: first-run
+setup, the library with real posters, a plan streaming in live (script first,
+then each frame developing in), a render, and the player — whose scene chapters
+seek correctly. The render's log showed all three wide shots
+**"reused the storyboard preview"**.
+
+What building it found, all fixed and each pinned by a test that fails on the
+old code:
+- **Preview reuse never fired in the real path.** `plan()` still defaulted
+  previews to 512x288, overriding the 1280x720 the schema said, so signatures
+  never matched the render. The earlier test drew the storyboard directly at a
+  matching size and passed anyway; the new one goes through `plan` and asks with
+  the size `render` actually uses.
+- **A scene's tone never reached the camera in a real render** — M6's claim
+  was overstated. The agent only makes `establishing`, `character` and
+  `lip_sync` shots, and `move_for` sent all three to fixed lists; tone was only
+  consulted for a `"detail"` kind the agent never produces, which is exactly
+  what M6's test checked. Now establishing shots and narration take the scene's
+  mood, and tense dialogue pushes in. The new test renders a film and reads back
+  the moves the agent chose.
+- **Then every scene opened on the same move.** The pick was offset by scene
+  number into each mood's list, and `drift` happened to sit at that position in
+  all three — a scene now opens on its mood's own move.
+- Scene numbers came from the model's own (zero-based) index; cards and status
+  messages now count from one by position.
+
+New backend surface for the UI: the plan streams `storyboard/script` (cards,
+cast, image budget, prompt) and `storyboard/frame` events; `GET
+/api/pipeline/film/{pid}` gives the player URLs instead of file paths (the old
+page split Windows paths in the browser to guess them); the storyboard takes
+`?engine=` so cards name the voices that will actually speak; the library has a
+poster frame per film; the job status carries the prompt.
+
+CI gained a `web` job (lockfile install, build, typecheck, export check), and
+the Dockerfile is now multi-stage so the image serves the new interface — it
+would otherwise have shipped the old page, since `web/out` is gitignored. The
+Node stage was verified by a clean `npm ci && npm run build` from only the
+committed files; the full image has not been built (Docker was not running).
+
+Still in M8: scene-scoped voice edits being reverted by a later global audio
+edit, and GitHub OAuth (waiting on an OAuth app registration).
 
 ## Known issues / next milestones
 

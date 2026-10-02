@@ -1,5 +1,8 @@
 # Frontend direction — three mockups
 
+> **Decided:** `creator.html`, built in `web/` with Fraunces as the title face.
+> These stay as the record of what was considered and why.
+
 Decision aids, not code. The frontend is being rebuilt (Next.js, static export,
 served by FastAPI) and these are the three directions it could take. Every
 value in them is real: "Hours of the Flood", its logline, the three scene

@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Title fonts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Fraunces:opsz,wght,SOFT,WONK@9..144,300..600,50,1&family=Gloock&family=Bodoni+Moda:opsz,wght@6..96,400..600&family=Big+Shoulders+Display:wght@500;700&family=Bricolage+Grotesque:opsz,wght@12..96,400..700&family=Syne:wght@500;700&family=Outfit:wght@300;400;500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<link href="https://api.fontshare.com/v2/css?f[]=clash-display@500,600&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0D0C0B; --surface:#171614; --line:rgba(255,255,255,.08);
+        --fg:#F2EFE9; --muted:#9A948B; --faint:#6B655D; --ember:#D98B3A;}
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--bg); color:var(--fg);
+       font-family:"Outfit",system-ui,sans-serif; font-weight:300; -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1180px; margin:0 auto; padding:48px 32px 96px;}
+  .intro{font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--faint);
+         letter-spacing:.04em; margin-bottom:40px; max-width:60ch; line-height:1.6;}
+
+  .spec{display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:28px;
+        padding:34px 0; border-top:1px solid var(--line); align-items:center;}
+  .tag{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.08em;
+       text-transform:uppercase; color:var(--faint); margin-bottom:14px; display:flex; gap:12px;}
+  .tag b{color:var(--ember); font-weight:400;}
+  .prompt{font-size:clamp(28px,3.4vw,42px); line-height:1.08; margin:0 0 18px; max-width:22ch;}
+  .scenes{display:flex; gap:22px; flex-wrap:wrap;}
+  .scenes span{font-size:18px;}
+  .scenes i{font-style:normal; font-family:"JetBrains Mono",monospace; font-size:10px;
+            color:var(--faint); margin-right:6px;}
+  .poster{position:relative; aspect-ratio:16/9; border-radius:10px; overflow:hidden;
+          border:1px solid var(--line);}
+  .poster img{width:100%; height:100%; object-fit:cover; display:block;}
+  .poster::after{content:""; position:absolute; inset:0;
+                 background:linear-gradient(to top,rgba(0,0,0,.7),transparent 60%);}
+  .poster h4{position:absolute; left:16px; bottom:12px; margin:0; z-index:1;
+             font-size:26px; line-height:1; font-weight:400;}
+  .why{font-size:13px; color:var(--muted); margin:16px 0 0; max-width:62ch; line-height:1.55;}
+
+  .f-instrument{font-family:"Instrument Serif",serif; letter-spacing:-.02em;}
+  .f-fraunces{font-family:"Fraunces",serif; font-variation-settings:"SOFT" 50,"WONK" 1,"opsz" 96;
+              font-weight:400; letter-spacing:-.025em;}
+  .f-gloock{font-family:"Gloock",serif; letter-spacing:-.015em;}
+  .f-bodoni{font-family:"Bodoni Moda",serif; font-weight:500; letter-spacing:-.02em;}
+  .f-shoulders{font-family:"Big Shoulders Display",sans-serif; font-weight:700;
+               text-transform:uppercase; letter-spacing:.005em; line-height:.95;}
+  .f-bricolage{font-family:"Bricolage Grotesque",sans-serif; font-weight:600; letter-spacing:-.035em;}
+  .f-clash{font-family:"Clash Display",sans-serif; font-weight:500; letter-spacing:-.025em;}
+  .f-syne{font-family:"Syne",sans-serif; font-weight:700; letter-spacing:-.03em;}
+  @media(max-width:760px){.spec{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="intro">Title fonts for the creator interface, set in place: the prompt
+    as the page title, the three scene titles under it, and the film title over a
+    real frame. Body text stays Outfit; timecodes stay JetBrains Mono. Only the
+    titles change.</p>
+
+  <section class="spec">
+    <div>
+      <div class="tag"><b>A</b> Instrument Serif <span>editorial · current</span></div>
+      <h2 class="prompt f-instrument">A clockmaker in a flooded city repairs the hours people lose</h2>
+      <div class="scenes f-instrument"><span><i>01</i>Morning Flood</span><span><i>02</i>Repairing Time</span><span><i>03</i>Restored Hours</span></div>
+      <p class="why">Quiet and literary. Reads like a script cover page. The risk: it is
+        already common on design-forward sites, so it says "tasteful" more than "yours".</p>
+    </div>
+    <div class="poster"><img src="f1.jpg" alt=""/><h4 class="f-instrument">Hours of the Flood</h4></div>
+  </section>
+
+  <section class="spec">
+    <div>
+      <div class="tag"><b>B</b> Fraunces <span>soft serif · wonky</span></div>
+      <h2 class="prompt f-fraunces">A clockmaker in a flooded city repairs the hours people lose</h2>
+      <div class="scenes f-fraunces"><span><i>01</i>Morning Flood</span><span><i>02</i>Repairing Time</span><span><i>03</i>Restored Hours</span></div>
+      <p class="why">Warm, slightly hand-made, with real character in the curves. Feels like
+        storytelling rather than software — closest to how a creator thinks about their work.</p>
+    </div>
+    <div class="poster"><img src="f1.jpg" alt=""/><h4 class="f-fraunces">Hours of the Flood</h4></div>
+  </section>
+
+  <section class="spec">
+    <div>
+      <div class="tag"><b>C</b> Gloock <span>heavy-contrast serif</span></div>
+      <h2 class="prompt f-gloock">A clockmaker in a flooded city repairs the hours people lose</h2>
+      <div class="scenes f-gloock"><span><i>01</i>Morning Flood</span><span><i>02</i>Repairing Time</span><span><i>03</i>Restored Hours</span></div>
+      <p class="why">Dense and confident, like a festival programme. Holds up best on top of
+        busy imagery, at the cost of feeling heavier across a whole screen.</p>
+    </div>
+    <div class="poster"><img src="f2.jpg" alt=""/><h4 class="f-gloock">Hours of the Flood</h4></div>
+  </section>
+
+  <section class="spec">
+    <div>
+      <div class="tag"><b>D</b> Bodoni Moda <span>didone · film credits</span></div>
+      <h2 class="prompt f-bodoni">A clockmaker in a flooded city repairs the hours people lose</h2>
+      <div class="scenes f-bodoni"><span><i>01</i>Morning Flood</span><span><i>02</i>Repairing Time</span><span><i>03</i>Restored Hours</span></div>
+      <p class="why">Opening-credits elegance. The most "cinema" of the serifs, but hairline
+        strokes thin out at small sizes, so it wants to stay large.</p>
+    </div>
+    <div class="poster"><img src="f2.jpg" alt=""/><h4 class="f-bodoni">Hours of the Flood</h4></div>
+  </section>
+
+  <section class="spec">
+    <div>
+      <div class="tag"><b>E</b> Big Shoulders Display <span>condensed · poster</span></div>
+      <h2 class="prompt f-shoulders">A clockmaker in a flooded city repairs the hours people lose</h2>
+      <div class="scenes f-shoulders"><span><i>01</i>Morning Flood</span><span><i>02</i>Repairing Time</span><span><i>03</i>Restored Hours</span></div>
+      <p class="why">Film-poster and title-card energy; fits a lot in a narrow space. Loud — it
+        sets the product's voice harder than any of the others.</p>
+    </div>
+    <div class="poster"><img src="f3.jpg" alt=""/><h4 class="f-shoulders">Hours of the Flood</h4></div>
+  </section>
+
+  <section class="spec">
+    <div>
+      <div class="tag"><b>F</b> Bricolage Grotesque <span>characterful grotesk</span></div>
+      <h2 class="prompt f-bricolage">A clockmaker in a flooded city repairs the hours people lose</h2>
+      <div class="scenes f-bricolage"><span><i>01</i>Morning Flood</span><span><i>02</i>Repairing Time</span><span><i>03</i>Restored Hours</span></div>
+      <p class="why">Modern creator-tool feel with quirks that stop it reading as generic
+        sans. The most "app" of the set; pairs naturally with the UI text.</p>
+    </div>
+    <div class="poster"><img src="f3.jpg" alt=""/><h4 class="f-bricolage">Hours of the Flood</h4></div>
+  </section>
+
+  <section class="spec">
+    <div>
+      <div class="tag"><b>G</b> Clash Display <span>sharp display grotesk</span></div>
+      <h2 class="prompt f-clash">A clockmaker in a flooded city repairs the hours people lose</h2>
+      <div class="scenes f-clash"><span><i>01</i>Morning Flood</span><span><i>02</i>Repairing Time</span><span><i>03</i>Restored Hours</span></div>
+      <p class="why">Crisp and premium — the face a lot of well-funded creator products use.
+        Strong, but that familiarity is the trade-off.</p>
+    </div>
+    <div class="poster"><img src="f1.jpg" alt=""/><h4 class="f-clash">Hours of the Flood</h4></div>
+  </section>
+
+  <section class="spec">
+    <div>
+      <div class="tag"><b>H</b> Syne <span>wide · art-school</span></div>
+      <h2 class="prompt f-syne">A clockmaker in a flooded city repairs the hours people lose</h2>
+      <div class="scenes f-syne"><span><i>01</i>Morning Flood</span><span><i>02</i>Repairing Time</span><span><i>03</i>Restored Hours</span></div>
+      <p class="why">Expressive and wide; feels like an independent studio. Long prompts get
+        heavy fast, which matters because the prompt is the page title.</p>
+    </div>
+    <div class="poster"><img src="f2.jpg" alt=""/><h4 class="f-syne">Hours of the Flood</h4></div>
+  </section>
+</div>
+</body>
+</html>

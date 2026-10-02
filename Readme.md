@@ -419,6 +419,26 @@ TEST_S3_ENDPOINT=http://127.0.0.1:5111 S3_REGION=us-east-1 \
 Point `TEST_S3_ENDPOINT` at `https://<account>.r2.cloudflarestorage.com` with
 real R2 credentials and the same test verifies Cloudflare R2.
 
+### The interface
+
+The screen is the storyboard. Write a sentence, and the plan streams in live —
+the script first, so every scene's tone and lines are readable while its frame
+is still being drawn, then each picture develops in as it arrives. Fix any
+scene in place, then **Render this film**, with the image cost stated next to
+the button from the real cast and scene count. The finished film plays with its
+scenes as chapters.
+
+It's a Next.js static export that FastAPI serves itself — no Node in
+production, one origin, no CORS:
+
+```bash
+cd web && npm ci && npm run build
+python main.py serve        # http://localhost:8000
+```
+
+The original page is still at `/classic/`. Three design directions that were
+considered are in `docs/mockups/`.
+
 ### Camera moves
 
 A still is not a shot. Each image gets a camera move chosen for what the shot

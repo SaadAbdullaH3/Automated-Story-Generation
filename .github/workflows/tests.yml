@@ -69,3 +69,37 @@ jobs:
         run: python -m pytest -q --timeout=600
         env:
           PIPELINE_SKIP_DOTENV: "1"
+
+  web:
+    name: web · build and typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install from the lockfile
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the static export
+        # next build also type-checks; it runs first so next-env.d.ts exists
+        # for the stand-alone check below.
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: The export is what FastAPI serves
+        run: |
+          test -f out/index.html
+          test -f out/studio/index.html
+          echo "export OK: $(find out -name '*.html' | wc -l) pages"
+

@@ -33,5 +33,21 @@ def list_projects(user: User = Depends(require_user)):
             "updated_at": state.updated_at,
             "video_url": asset_url(
                 state.video.final_video_path if state.video else None),
+            "poster_url": asset_url(_poster(state)),
+            "stage": state.stage,
+            "scene_count": len(state.script.scenes) if state.script else 0,
+            "duration_ms": state.video.duration_ms if state.video else None,
         })
     return out
+
+
+def _poster(state):
+    """A frame to show for the film: its first storyboard preview, else the
+    first scene's wide shot."""
+    board = getattr(state, "storyboard", None)
+    if board and board.frames and board.frames[0].preview_path:
+        return board.frames[0].preview_path
+    video = getattr(state, "video", None)
+    if video and getattr(video, "frames", None):
+        return video.frames[0].image_path
+    return None

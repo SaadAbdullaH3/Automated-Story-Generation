@@ -1,0 +1,27 @@
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 22px 0 0;
+  margin-bottom: clamp(32px, 6vw, 64px);
+}
+.mark {
+  font-size: 20px;
+  text-decoration: none;
+  letter-spacing: -0.01em;
+}
+.spacer {
+  flex: 1;
+}
+.bar button {
+  white-space: nowrap;
+}
+/* On a phone the address is the thing to drop, not the way out. */
+@media (max-width: 560px) {
+  .bar :global(.meta) {
+    display: none;
+  }
+  .mark {
+    font-size: 18px;
+  }
+}

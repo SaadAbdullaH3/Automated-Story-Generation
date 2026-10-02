@@ -12,6 +12,12 @@ __pycache__
 .pytest_cache
 .mypy_cache
 
+# The interface is built inside the image; the local build would only be
+# stale weight in the context (node_modules alone is several hundred MB).
+web/node_modules/
+web/.next/
+web/out/
+
 # Generated films, snapshots, the database and the voice models — these are
 # runtime state, mounted in, never baked into the image.
 data/

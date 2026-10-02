@@ -1,0 +1,345 @@
+.loading {
+  min-height: 60vh;
+}
+.missing {
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+}
+.missing h1 {
+  font-size: clamp(32px, 4vw, 46px);
+  margin: 0;
+}
+.missing p {
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+/* ---- header: the sentence you wrote, kept in view ---- */
+.head {
+  margin-bottom: 34px;
+}
+.head .label {
+  margin: 0 0 10px;
+}
+.prompt {
+  font-size: clamp(30px, 3.6vw, 48px);
+  margin: 0;
+  max-width: 26ch;
+}
+.status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 18px 0 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.statusFailed {
+  color: var(--danger);
+}
+.problem {
+  color: var(--danger);
+  font-size: 14px;
+  margin: 12px 0 0;
+}
+
+/* ---- the strip ---- */
+.strip {
+  display: grid;
+  /* Cards stay wide enough to read; more scenes wrap rather than shrink. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 22px;
+  align-items: start;
+  margin-bottom: 34px;
+}
+.scene {
+  min-width: 0;
+}
+.frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  transition: border-color 0.3s;
+}
+.frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  animation: develop 0.9s var(--ease);
+}
+/* A frame arriving develops in, rather than popping. */
+@keyframes develop {
+  from {
+    opacity: 0;
+    filter: blur(8px) saturate(0.6);
+    transform: scale(1.03);
+  }
+}
+.active .frame {
+  border-color: rgba(217, 139, 58, 0.55);
+}
+.pending {
+  display: grid;
+  place-items: center;
+}
+.pending::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.05) 50%, transparent 80%);
+  background-size: 220% 100%;
+  animation: sweep 2.1s linear infinite;
+}
+@keyframes sweep {
+  to {
+    background-position: -220% 0;
+  }
+}
+.drawing {
+  position: relative;
+  z-index: 1;
+}
+.shade {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 45%;
+  pointer-events: none;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.55), transparent);
+}
+.num,
+.move {
+  position: absolute;
+  left: 14px;
+  font-family: var(--mono);
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
+}
+.num {
+  top: 12px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+}
+.move {
+  bottom: 12px;
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.editBtn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  background: rgba(13, 12, 11, 0.7);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.scene:hover .editBtn,
+.editBtn:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .editBtn {
+    opacity: 1;
+  }
+}
+.sceneTitle {
+  font-size: 17px;
+  font-weight: 500;
+  margin: 15px 0 3px;
+  letter-spacing: -0.01em;
+}
+.line {
+  margin: 12px 0 0;
+  padding-left: 12px;
+  border-left: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+  font-style: italic;
+}
+.line cite {
+  display: block;
+  margin-top: 5px;
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--faint);
+}
+
+/* ---- editing a scene in place ---- */
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+.editor .textarea {
+  resize: vertical;
+  font-size: 14px;
+}
+.editNote {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--faint);
+}
+.editActions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---- deciding and spending ---- */
+.renderBar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px 32px;
+  align-items: end;
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+}
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px 24px;
+}
+.inline {
+  display: flex;
+  gap: 8px;
+}
+.spend {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.sampleNote {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--faint);
+  text-align: right;
+  max-width: 44ch;
+}
+.renderRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.renderRow b {
+  color: var(--fg);
+  font-weight: 500;
+}
+@media (max-width: 760px) {
+  .renderBar {
+    grid-template-columns: 1fr;
+  }
+  .spend {
+    align-items: stretch;
+  }
+  .sampleNote {
+    text-align: left;
+  }
+  .renderRow {
+    justify-content: space-between;
+  }
+}
+
+/* ---- watching ---- */
+.watch {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.screen {
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--line);
+}
+.screen video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+}
+.chapters {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 8px;
+}
+.chapters li {
+  flex-basis: 0;
+  min-width: 0;
+}
+.chapter {
+  width: 100%;
+  font: inherit;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.chapterFrame {
+  display: block;
+  height: 54px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  transition: border-color 0.2s;
+}
+.chapterFrame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.chapter:hover .chapterFrame img,
+.chapterOn .chapterFrame img {
+  opacity: 1;
+}
+.chapterOn .chapterFrame {
+  border-color: var(--ember);
+}
+.chapterText {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-top: 7px;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chapterOn .chapterText {
+  color: var(--fg);
+}
+.watchActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 26px;
+}
+.watchActions .meta {
+  margin-left: auto;
+}

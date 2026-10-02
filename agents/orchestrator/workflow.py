@@ -11,7 +11,10 @@ from typing import Callable, Dict, Iterator, List, Optional
 from agents.audio_agent import AudioAgent
 from agents.story_agent import StoryAgent
 from agents.video_agent import VideoAgent
+from shared.assets import asset_url
 from shared.constants import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH
+
+from .storyboard_view import cast, image_budget, scene_cards
 from shared.schemas.pipeline import PipelineState
 from shared.timeline import LINE_GAP_MS, SCENE_PREROLL_MS, SCENE_TAIL_MS, estimate_line_ms
 from shared.utils.ids import new_project_id
@@ -119,8 +122,11 @@ class PipelineOrchestrator:
         scene_count: int = 4,
         project_id: Optional[str] = None,
         with_preview: bool = True,
-        preview_width: int = 512,
-        preview_height: int = 288,
+        # The render size, not a thumbnail: a preview drawn at the render size
+        # *is* the scene's wide shot, so the render reuses it instead of paying
+        # for the identical image again. At 512x288 it never matched.
+        preview_width: int = DEFAULT_WIDTH,
+        preview_height: int = DEFAULT_HEIGHT,
     ) -> PipelineState:
         """Write the script and draw one preview image per scene.
 
@@ -136,11 +142,38 @@ class PipelineOrchestrator:
             self.story.run(state, target_duration_s=target_duration_s, scene_count=scene_count)
             emit(ProgressEvent(phase="story", status="complete", project_id=project_id,
                                message="Script ready", progress=0.4))
+            # The script exists long before any picture does. Sending it now
+            # lets the interface show every scene, its tone and its lines while
+            # the frames are still being drawn.
+            script = state.script
+            emit(ProgressEvent(
+                phase="storyboard", status="script", project_id=project_id,
+                message=f"{len(script.scenes)} scenes written", progress=0.45,
+                payload={"prompt": state.user_prompt,
+                         "title": script.story.title, "logline": script.story.logline,
+                         "scenes": scene_cards(script), "cast": cast(script),
+                         "images": image_budget(script)}))
             if with_preview:
                 emit(ProgressEvent(phase="storyboard", status="started", project_id=project_id,
                                    message="Drawing storyboard previews", progress=0.5))
+                drawn = []
+                total = len(script.scenes)
+                # Creators count scenes from one; models sometimes number them
+                # from zero, so the position is used rather than scene.index.
+                position = {s.scene_id: n for n, s in enumerate(script.scenes, start=1)}
+
+                def frame_ready(scene, path):
+                    drawn.append(scene.scene_id)
+                    emit(ProgressEvent(
+                        phase="storyboard", status="frame", project_id=project_id,
+                        message=f"Scene {position[scene.scene_id]} drawn — {scene.title}",
+                        progress=0.5 + 0.45 * len(drawn) / max(1, total),
+                        payload={"scene_id": scene.scene_id,
+                                 "preview_url": asset_url(path)}))
+
                 self.video.generate_storyboard(state, width=preview_width,
-                                               height=preview_height)
+                                               height=preview_height,
+                                               on_frame=frame_ready)
             state.stage = "storyboard"
         except Exception as e:  # noqa: BLE001
             emit(ProgressEvent(phase="error", status="failed", project_id=project_id,
@@ -192,8 +225,8 @@ class PipelineOrchestrator:
         board = state.storyboard
         self.video.generate_storyboard(
             state,
-            width=board.preview_width if board else 512,
-            height=board.preview_height if board else 288,
+            width=board.preview_width if board else DEFAULT_WIDTH,
+            height=board.preview_height if board else DEFAULT_HEIGHT,
             scene_ids=[scene_id] if (visual_changed and regenerate_preview) else [],
         )
         self.sm.snapshot(state, asset_paths=self._collect_assets(state),

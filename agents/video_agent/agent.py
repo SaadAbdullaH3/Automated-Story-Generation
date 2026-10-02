@@ -280,8 +280,10 @@ class VideoAgent:
         return CharacterPortrait(character_id=c.id,
                                  image_path=_ensure_image(res, out, prompt, width, height))
 
-    def generate_storyboard(self, state: PipelineState, width: int = 512, height: int = 288,
-                            scene_ids: Optional[List[str]] = None) -> Storyboard:
+    def generate_storyboard(self, state: PipelineState, width: int = DEFAULT_WIDTH,
+                            height: int = DEFAULT_HEIGHT,
+                            scene_ids: Optional[List[str]] = None,
+                            on_frame: Optional[Any] = None) -> Storyboard:
         """One small preview image per scene, for approval before the real render.
 
         A preview costs a single image; a full render costs three per scene plus
@@ -298,9 +300,17 @@ class VideoAgent:
         # (a text-only edit shouldn't spend images).
         targets = [s for s in script.scenes
                    if scene_ids is None or s.scene_id in scene_ids]
+        def draw(scene: Scene) -> str:
+            path = self._generate_preview(state.project_id, scene, width, height,
+                                          script.story)
+            # Each frame is reported the moment it exists, so the interface can
+            # fill the storyboard in scene by scene rather than all at the end.
+            if on_frame is not None:
+                on_frame(scene, path)
+            return path
+
         previews = run_jobs(
-            [(self._generate_preview, (state.project_id, scene, width, height, script.story))
-             for scene in targets],
+            [(draw, (scene,)) for scene in targets],
             workers=providers.concurrency("image"), label="storyboard previews",
         )
         preview_by_scene = dict(zip([s.scene_id for s in targets], previews))
