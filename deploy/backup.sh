@@ -12,6 +12,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 DEST=${BACKUP_DIR:-$HOME/backups}
+# Where Docker sees that folder. The same path, unless this script itself runs
+# in a container talking to the host's Docker (a backup sidecar).
+DEST_FOR_DOCKER=${BACKUP_DIR_HOST:-$DEST}
 KEEP=${BACKUP_KEEP:-7}
 COMPOSE=${COMPOSE:-docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml}
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -32,6 +35,14 @@ mv "$DEST/data/$stamp.part" "$DEST/data/$stamp"
 # Keep the newest $KEEP of each.
 find "$DEST/db" -maxdepth 1 -name '*.dump' | sort | head -n -"$KEEP" | xargs -r rm -f
 find "$DEST/data" -mindepth 1 -maxdepth 1 -type d | sort | head -n -"$KEEP" | xargs -r rm -rf
+
+# Off the machine too, when .env names a bucket (BACKUP_BUCKET, with the same
+# S3/R2 keys the app uses): every dump and a mirror of tonight's films, only
+# the files that changed. Run in the app's image, which has the S3 client.
+if grep -qs '^BACKUP_BUCKET=.' .env; then
+  $COMPOSE run --rm --no-deps -T -u "$(id -u):$(id -g)" -v "$DEST_FOR_DOCKER:/backups" api \
+    python scripts/offsite_backup.py push --backups /backups
+fi
 
 # du counts a hard-linked file once per call, so the last figure is what all
 # the snapshots really take on disk together.

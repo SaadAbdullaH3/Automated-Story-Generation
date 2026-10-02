@@ -54,9 +54,11 @@ jobs:
         run: ffmpeg -version
 
       - name: Install dependencies
+        # The S3 client and moto (a local fake of S3) let the off-machine
+        # backup tests run here too, offline.
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r requirements-s3.txt "moto>=5"
 
       - name: Every module imports
         # A syntax error in a file no test touches should still fail the build.

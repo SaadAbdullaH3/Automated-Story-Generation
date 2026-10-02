@@ -4,13 +4,22 @@
 #
 #   bash deploy/restore.sh latest
 #   bash deploy/restore.sh 20261003T031500Z
+#   bash deploy/restore.sh bucket      # the machine is new: fetch from R2 first
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 DEST=${BACKUP_DIR:-$HOME/backups}
+DEST_FOR_DOCKER=${BACKUP_DIR_HOST:-$DEST}    # see backup.sh
 COMPOSE=${COMPOSE:-docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml}
 SUDO=${SUDO-sudo}
-stamp=${1:?which backup? a name from $DEST/db (without .dump), or "latest"}
+stamp=${1:?which backup? a name from $DEST/db (without .dump), "latest", or "bucket"}
+if [ "$stamp" = bucket ]; then
+  mkdir -p "$DEST"
+  stamp=$($COMPOSE run --rm --no-deps -T -u "$(id -u):$(id -g)" -v "$DEST_FOR_DOCKER:/backups" api \
+            python scripts/offsite_backup.py pull --backups /backups \
+          | awk '/^pulled backup/ {print $3}')
+  [ -n "$stamp" ] || { echo "nothing came back from the bucket"; exit 1; }
+fi
 if [ "$stamp" = latest ]; then
   stamp=$(find "$DEST/db" -maxdepth 1 -name '*.dump' | sort | tail -n 1 | xargs -r basename | sed 's/\.dump$//')
 fi

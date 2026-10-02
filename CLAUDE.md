@@ -619,8 +619,18 @@ for 1.6 s of audio is emulation, not a measurement.
 Image size 2.06 GB → 1.68 GB. Suites: **371 passed** on Windows, **367 on a
 real Postgres 16**, and the in-image checks pass on both architectures.
 
-Still to do in M9: the VM itself (waiting on the Oracle account), native
-render timings there, and an off-machine copy of the backups.
+**Backups leave the machine** (`scripts/offsite_backup.py`, wired into
+`backup.sh` when `.env` names a `BACKUP_BUCKET`): every dump plus a mirror of
+the newest films, changed files only — uploads stay single-part below 64 MB so
+R2's ETag is the MD5 and an unchanged file is never re-sent (a second push to
+real R2: 0 files). Proven as a disaster drill against the real bucket: a stack
+backed up, then its database volume, films *and local backups* deleted; a
+fresh empty stack and `restore.sh bucket` brought back the account, its
+version and all 8 files, and the account signed in and saw its film. `LATEST`
+is written last, so a push cut short still names the previous whole backup.
+
+Still to do in M9: the VM itself (waiting on the Oracle account) and native
+render timings there.
 
 ## Known issues / next milestones
 
@@ -658,8 +668,10 @@ render timings there, and an off-machine copy of the backups.
   step first). GitHub's callback must match the registered URL exactly:
   open the app at `http://localhost:8000`, not `127.0.0.1`, or pin
   `GITHUB_CALLBACK_URL`.
-- Backups (`deploy/backup.sh`) live on the VM's own disk: they cover
-  mistakes, not losing the VM. Copying them off-machine (R2) is not done.
+- Off-machine backups mirror only the newest films; older database dumps are
+  kept, but restoring an old one pairs it with today's films. R2's free 10 GB
+  will eventually be outgrown by films + versions (snapshot storage growth,
+  below).
 - Docker Desktop on Windows reaches bind-mounted `data/` through a slow
   file-sharing layer, so container timings on the laptop (a scene-2 voice
   edit took 100 s) say little about a Linux host's own disk. Measure on the VM.

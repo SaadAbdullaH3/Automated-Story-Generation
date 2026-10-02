@@ -123,6 +123,30 @@ bash deploy/restore.sh latest          # or a name from ~/backups/db
 This was tested as a round trip: back up twice, empty the database and delete
 the films, restore — the account, its version and every file came back,
 owned by the containers' user, and the account could sign in and see its
-film. The backups live on the same disk as the app, so they protect against
-mistakes, not against losing the VM; copying `~/backups` somewhere else
-(another machine, or an R2 bucket) is the next step.
+film.
+
+### Off the machine
+
+Backups on the VM's own disk cover mistakes, not losing the VM. Name a bucket
+in `.env` and every nightly run also sends them to it — any S3-compatible one;
+Cloudflare R2 is free to 10 GB, with the same keys the app would use:
+
+```bash
+BACKUP_BUCKET=multi-agent-storygen
+S3_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+```
+
+The bucket keeps every database dump (the newest 14, `BACKUP_KEEP_REMOTE`)
+and a mirror of the newest films; only files that changed are uploaded. On a
+new machine, after `setup-vm.sh` and `up -d`:
+
+```bash
+bash deploy/restore.sh bucket
+```
+
+Tested as the disaster it is for: a stack with an account and a film backed
+up, then its database volume, its films *and its local backups* deleted; a
+fresh empty stack, `restore.sh bucket`, and the account, its version and all
+eight files came back, and the account signed in and saw its film.
