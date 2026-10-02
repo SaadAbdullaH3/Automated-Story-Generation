@@ -13,8 +13,21 @@
 .spacer {
   flex: 1;
 }
-.bar button {
+.bar button,
+.link {
   white-space: nowrap;
+}
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: calc(-1 * clamp(20px, 4vw, 44px)) 0 clamp(24px, 4vw, 40px);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ember-hi);
+}
+.noticeError {
+  color: var(--danger);
 }
 /* On a phone the address is the thing to drop, not the way out. */
 @media (max-width: 560px) {

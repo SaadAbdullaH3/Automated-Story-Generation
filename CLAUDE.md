@@ -84,7 +84,7 @@ not enough).
 | Tool layer | `mcp/` | Internal tool registry (**not** the MCP protocol). Tools register on `import mcp.tools`; agents call `ToolExecutor().execute("audio.tts", ...)`. Each tool tries providers in order and falls back. |
 | Model settings | `config/providers.yaml` + `shared/providers.py` | **Which model serves each role** (story, edit_intent, translate, image, tts, music). Agents never name a model: they call `providers.chain(role)` and use the first available, falling through on failure. `concurrency:` per provider drives `shared/utils/parallel.run_jobs`. |
 | LLM client | `mcp/tools/llm_tools/llm_client.py` | `get_llm_client(role)` walks that role's chain: Gemini (google-genai, native JSON schema), Groq / OpenRouter / Ollama / OpenAI (all via the openai client), Anthropic, then `mock` = use the offline fallback. |
-| Accounts | `auth/` | `passwords.py` (argon2id), `accounts.py` (users, lockout, project ownership), `sessions.py` (opaque token in an HttpOnly cookie, stored hashed), `deps.py` (**the only place a request becomes a user** — routes depend on `require_user` / `require_project` rather than checking for themselves). |
+| Accounts | `auth/` | `passwords.py` (argon2id), `accounts.py` (users, lockout, project ownership, linked identities), `sessions.py` (opaque token in an HttpOnly cookie, stored hashed), `github.py` (OAuth with GitHub — never joins accounts by email), `deps.py` (**the only place a request becomes a user** — routes depend on `require_user` / `require_project` rather than checking for themselves). |
 | Jobs | `jobs/` | **Runs are rows, not closures.** `queue.py` (enqueue/claim/heartbeat/cancel, one atomic UPDATE per claim) and `worker.py` (claims jobs, runs the orchestrator, publishes assets). Cancellation lands between pipeline steps, never mid-ffmpeg. **One job per project at a time, in queue order** — everything that writes a version (plan, render, edit, revert) goes through here. |
 | Database | `shared/db.py` | One database for the version log and the queue. SQLite (WAL) by default, Postgres via `DATABASE_URL`, same SQL through SQLAlchemy Core. |
 | Assets | `shared/assets.py` | The only place a file path becomes a URL. Local disk by default; `STORAGE_URL=s3://bucket` publishes to any S3-compatible bucket (R2) so the worker and the API need not share a filesystem. |
@@ -406,7 +406,7 @@ Worth knowing operationally: `data/state.db` runs in WAL mode, so copying that
 file alone does **not** copy recent writes — a backup taken with `cp` came back
 empty. Use SQLite's backup API (`sqlite3.Connection.backup`) or `VACUUM INTO`.
 
-## M8 results (2026-10-02, in progress)
+## M8 results (2026-10-02)
 
 Frontend rebuilt as the "creator" design — chosen over an editorial dashboard
 and an industrial terminal (all three are in `docs/mockups/`), because both
@@ -527,7 +527,25 @@ chapters after it moved), "make everyone louder" left scene 2 whispering at
 recording that it is v6 — with the film byte-identical to v2, and "make it
 better" was refused with nothing changed.
 
-Still in M8: GitHub OAuth (OAuth app registered, keys in `.env`).
+**Sign in with GitHub** (`auth/github.py`, an OAuth app, authorization-code
+flow; off unless `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are set):
+- A GitHub sign-in **never joins an existing account because the email
+  matches.** Addresses here are never proven, so whoever registered the address
+  first would receive the sign-in (account pre-hijacking). An account with a
+  password connects GitHub from the top bar while signed in instead.
+- The callback is refused unless its `state` matches the one handed to this
+  browser in an HttpOnly, SameSite cookie scoped to `/api/auth/github` — and
+  checked before the code is spent (login CSRF).
+- Identities are keyed by GitHub's numeric id, not the login, which can be
+  renamed. GitHub-only accounts store an unusable password hash, so there is
+  nothing to guess; sign-up policy, the first-admin rule and disabled
+  accounts apply exactly as for passwords.
+- 15 tests against a fake GitHub; three of them were each shown to fail when
+  their guard (the state check, the email refusal, the disabled check) was
+  removed. The registered app's keys were checked against GitHub itself: its
+  token endpoint answers `bad_verification_code` for them with a dummy code
+  and `incorrect_client_credentials` with a wrong secret. The full round trip
+  needs a person's GitHub login, so it is the owner's to click through.
 
 ## Known issues / next milestones
 
@@ -556,8 +574,13 @@ Still in M8: GitHub OAuth (OAuth app registered, keys in `.env`).
 - Two workers on one laptop contend for CPU; concurrency helps across hosts.
 - No password reset by email (no mail service at $0) — `python main.py users
   passwd <email>` is the recovery path, which suits a self-hosted deployment.
-- No OAuth or two-factor; sessions are not yet listed and revokable per device
-  in the UI, though the API and the data model both support it.
+- No two-factor; sessions are not yet listed and revokable per device in the
+  UI, though the API and the data model both support it.
+- GitHub can be connected but not disconnected from the UI yet (an account
+  made through GitHub has no password, so disconnecting needs a set-password
+  step first). GitHub's callback must match the registered URL exactly:
+  open the app at `http://localhost:8000`, not `127.0.0.1`, or pin
+  `GITHUB_CALLBACK_URL`.
 - An edit that rewrites the script starts its voices fresh (scene 2 is a
   different scene afterwards); only the voice engine carries over.
 - Versions saved by a revert before M8 carry the wrong `version` inside their

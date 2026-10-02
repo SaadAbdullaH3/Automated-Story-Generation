@@ -5,7 +5,7 @@ music, subtitles and cuts.**
 
 [![tests](https://github.com/SaadAbdullaH3/Automated-Story-Generation/actions/workflows/tests.yml/badge.svg)](https://github.com/SaadAbdullaH3/Automated-Story-Generation/actions/workflows/tests.yml)
 ![python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
-![tests](https://img.shields.io/badge/tests-274%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-357%20passing-brightgreen)
 ![cost](https://img.shields.io/badge/running%20cost-%240-brightgreen)
 
 ```bash
@@ -495,6 +495,13 @@ stores only its hash, so a stolen dump can't be replayed, signing out really
 signs out, and disabling an account ends its sessions at once. Passwords are
 argon2id. A wrong password and an unknown address give the identical answer,
 and eight failures lock the account for fifteen minutes.
+
+**Sign in with GitHub** is there when `GITHUB_CLIENT_ID` and
+`GITHUB_CLIENT_SECRET` are set. It never joins an existing account just because
+the email matches — addresses aren't proven here, so whoever registered one
+first would receive the sign-in. An account with a password connects GitHub
+while signed in instead, and the callback is refused unless it carries the
+state this browser was handed.
 
 Projects are private to their owner. Asking for someone else's gets a 404
 rather than a 403, because a 403 would confirm the id is real. That applies to
