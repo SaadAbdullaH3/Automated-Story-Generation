@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 
+import { versioned } from "@/lib/api";
 import { timecode } from "@/lib/copy";
 import type { FilmPlayback } from "@/lib/types";
 
@@ -28,7 +29,7 @@ export function Player({ film }: { film: FilmPlayback }) {
       <div className={styles.screen}>
         <video
           ref={video}
-          src={film.video_url}
+          src={versioned(film.video_url, film.version)}
           controls
           playsInline
           preload="metadata"
@@ -38,7 +39,13 @@ export function Player({ film }: { film: FilmPlayback }) {
           {film.subtitles
             .filter((t) => !t.burned_in)
             .map((t) => (
-              <track key={t.code} kind="subtitles" src={t.url} srcLang={t.code} label={t.language} />
+              <track
+                key={t.code}
+                kind="subtitles"
+                src={versioned(t.url, film.version)}
+                srcLang={t.code}
+                label={t.language}
+              />
             ))}
         </video>
       </div>
@@ -55,7 +62,7 @@ export function Player({ film }: { film: FilmPlayback }) {
                 <span className={styles.chapterFrame}>
                   {c.poster_url && (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={c.poster_url} alt="" />
+                    <img src={versioned(c.poster_url, film.version)} alt="" />
                   )}
                 </span>
                 <span className={styles.chapterText}>

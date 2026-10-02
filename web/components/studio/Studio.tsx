@@ -4,17 +4,29 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, ApiError, type SceneEdit } from "@/lib/api";
+import { api, ApiError, versioned, type SceneEdit } from "@/lib/api";
 import { describe, elapsedSeconds } from "@/lib/copy";
-import type { Card, CastMember, FilmPlayback, ImageBudget, Storyboard } from "@/lib/types";
+import type {
+  Card,
+  CastMember,
+  FilmPlayback,
+  FilmVersion,
+  ImageBudget,
+  Storyboard,
+} from "@/lib/types";
 import { useProgress } from "@/lib/useProgress";
 
+import { EditPanel } from "./EditPanel";
 import { Player } from "./Player";
 import { RenderBar, type RenderChoice } from "./RenderBar";
 import { SceneCard } from "./SceneCard";
+import { Versions } from "./Versions";
 import styles from "./studio.module.css";
 
 type Followed = { id: string; kind: string };
+
+/** Jobs that change a finished film rather than make one. */
+const CHANGES = new Set(["edit", "revert"]);
 
 /** What the strip shows while a plan is still being drawn, built from events. */
 type Streamed = {
@@ -40,18 +52,24 @@ export function Studio() {
   const [showBoard, setShowBoard] = useState(false);
   const [askedFor, setAskedFor] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [versions, setVersions] = useState<FilmVersion[]>([]);
+  const [restoring, setRestoring] = useState<number | null>(null);
+  // A finished change whose outcome no longer describes what's playing.
+  const [settled, setSettled] = useState<string | null>(null);
 
   const { events, finished, signedOut } = useProgress(pid, job?.id ?? null);
 
   const refresh = useCallback(
     async (voiceEngine: string | null = engine) => {
       if (!pid) return;
-      const [b, f] = await Promise.all([
+      const [b, f, v] = await Promise.all([
         api.storyboard(pid, voiceEngine).catch(() => null),
         api.film(pid).catch(() => null),
+        api.versions(pid).catch(() => [] as FilmVersion[]),
       ]);
       setBoard(b);
       setFilm(f);
+      setVersions(v);
     },
     [pid, engine],
   );
@@ -89,9 +107,11 @@ export function Studio() {
   }, [signedOut]);
 
   const running = job !== null && !finished;
+  const changing = job !== null && CHANGES.has(job.kind);
+  // A second-by-second clock while something runs; otherwise enough to keep
+  // "4 min ago" honest.
   useEffect(() => {
-    if (!running) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
+    const t = setInterval(() => setNow(Date.now()), running ? 1000 : 30_000);
     return () => clearInterval(t);
   }, [running]);
 
@@ -123,8 +143,9 @@ export function Studio() {
   let mode: Mode;
   if (!loaded) mode = "loading";
   else if (running && job?.kind === "plan") mode = "planning";
-  else if (running) mode = "rendering";
-  else if (film && !showBoard) mode = "watch";
+  else if (running && !changing) mode = "rendering";
+  // An edit keeps you with the film: it plays on while the change is made.
+  else if (film && (!showBoard || running)) mode = "watch";
   else if (board || streamed) mode = "storyboard";
   else mode = "missing";
 
@@ -171,6 +192,32 @@ export function Studio() {
     if (job) await api.cancel(job.id).catch(() => undefined);
   }
 
+  async function change(query: string) {
+    if (!pid) return;
+    setProblem(null);
+    try {
+      const run = await api.edit(pid, query);
+      setJob({ id: run.job_id, kind: "edit" });
+    } catch (err) {
+      setProblem(err instanceof ApiError ? err.message : "Couldn't start that change.");
+    }
+  }
+
+  async function goBack(version: number) {
+    if (!pid) return;
+    setRestoring(version);
+    setProblem(null);
+    if (job) setSettled(job.id);
+    try {
+      await api.goBack(pid, version);
+      await refresh();
+    } catch (err) {
+      setProblem(err instanceof ApiError ? err.message : "Couldn't go back to that version.");
+    } finally {
+      setRestoring(null);
+    }
+  }
+
   if (mode === "loading") return <div className={styles.loading} aria-busy="true" />;
 
   if (mode === "missing") {
@@ -191,7 +238,8 @@ export function Studio() {
         <p className="label">{title || " "}</p>
         <h1 className={`title ${styles.prompt}`}>{prompt || title || "Writing the script"}</h1>
 
-        {(running || failed || (finished && last)) && (
+        {/* A change to a finished film reports beside the film instead. */}
+        {!changing && (running || failed || (finished && last)) && (
           <p className={styles.status} aria-live="polite">
             {running && <span className="pip" />}
             <span className={failed ? styles.statusFailed : undefined}>
@@ -214,17 +262,36 @@ export function Studio() {
 
       {mode === "watch" && film ? (
         <>
-          <Player film={film} />
+          {/* Keyed by version: a new cut reloads the player and its tracks. */}
+          <Player key={film.version} film={film} />
           <div className={styles.watchActions}>
-            <a className="btn primary" href={film.video_url} download>
+            <a className="btn primary" href={versioned(film.video_url, film.version)} download>
               Download
             </a>
-            <button className="btn" onClick={() => setShowBoard(true)}>
+            <button className="btn" onClick={() => setShowBoard(true)} disabled={running}>
               Back to the storyboard
             </button>
             <span className="meta">
               {film.width}×{film.height} · {film.fps}fps · v{film.version}
             </span>
+          </div>
+          <div className={styles.afterRender}>
+            <EditPanel
+              film={film}
+              cast={board?.cast ?? []}
+              events={changing && job?.id !== settled ? events : []}
+              running={running && changing}
+              elapsed={changing ? elapsed : null}
+              onSubmit={change}
+              onStop={stop}
+            />
+            <Versions
+              versions={versions}
+              locked={running}
+              restoring={restoring}
+              now={now}
+              onGoBack={goBack}
+            />
           </div>
         </>
       ) : (

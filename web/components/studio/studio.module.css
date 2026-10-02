@@ -343,3 +343,138 @@
 .watchActions .meta {
   margin-left: auto;
 }
+
+/* ---- after the render: change it in a sentence, or go back ---- */
+.afterRender {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr);
+  gap: 32px 56px;
+  align-items: start;
+  margin-top: 40px;
+  padding-top: 26px;
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 860px) {
+  .afterRender {
+    grid-template-columns: 1fr;
+  }
+}
+.edit h2,
+.versions h2 {
+  margin: 0 0 14px;
+  font-weight: 400;
+}
+.editForm {
+  display: flex;
+  gap: 10px;
+}
+.editInput {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  padding: 12px 14px;
+}
+@media (max-width: 560px) {
+  .editForm {
+    flex-direction: column;
+  }
+}
+.ideas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.idea {
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition:
+    color 0.18s,
+    border-color 0.18s;
+}
+.idea:hover {
+  color: var(--fg);
+  border: 1px solid var(--ember);
+}
+.editStatus {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 16px;
+}
+/* What the request was taken to mean, before any work: a misread shows here. */
+.understood {
+  align-self: flex-start;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--ember-hi);
+  background: rgba(217, 139, 58, 0.1);
+  border: 1px solid rgba(217, 139, 58, 0.28);
+  border-radius: 999px;
+  padding: 4px 11px;
+}
+.editLine {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.versionList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 380px;
+  overflow-y: auto;
+}
+.version {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.version:last-child {
+  border-bottom: 0;
+}
+.versionNum {
+  color: var(--faint);
+}
+.versionOn .versionNum {
+  color: var(--ember);
+}
+.versionBody {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.versionLabel,
+.versionMeta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.versionLabel {
+  font-size: 14px;
+}
+.versionMeta {
+  font-size: 12px;
+  color: var(--faint);
+}
+.playing {
+  color: var(--ember);
+  padding-right: 10px;
+}

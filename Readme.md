@@ -428,6 +428,13 @@ scene in place, then **Render this film**, with the image cost stated next to
 the button from the real cast and scene count. The finished film plays with its
 scenes as chapters.
 
+Under the film, change it in a sentence — "make the voices in scene 2
+whispered", "the recipe scene should feel darker". It first says what it took
+that to mean, so a misread shows before anything is rendered; a request it
+can't carry out is refused with the film left exactly as it was, never
+"applied" as a silent no-op. Every cut is kept under **Versions** in your own
+words, and going back to one is itself a new version.
+
 It's a Next.js static export that FastAPI serves itself — no Node in
 production, one origin, no CORS:
 

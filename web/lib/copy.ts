@@ -26,7 +26,17 @@ export function describe(ev: ProgressEvent | undefined): string {
       return "Drawing the shots and cutting the film";
     case "video:complete":
       return "Film cut";
+    case "edit:started":
+      return "Reading your change";
+    case "edit:understood":
+      // What it understood is shown beside this; the line says what's next.
+      return "Planning the change";
+    case "edit:step":
+    case "revert:started":
+      return ev.message;
     case "complete:complete":
+      if (ev.payload?.kind === "edit") return "Change made";
+      if (ev.payload?.kind === "revert") return ev.message;
       return "Your film is ready";
     case "cancelled:cancelled":
       return "Stopped";
@@ -36,6 +46,27 @@ export function describe(ev: ProgressEvent | undefined): string {
       return "This one didn't make it";
   }
   return ev.message || "Working";
+}
+
+/** A failure's reason without "EditFailed: ValueError: " stacked in front. */
+export function reason(message: string | undefined | null): string {
+  let text = (message ?? "").trim();
+  for (;;) {
+    const m = /^([A-Za-z_]\w*(?:Error|Exception|Failed)): /.exec(text);
+    if (!m) return text;
+    text = text.slice(m[0].length);
+  }
+}
+
+/** "just now", "4 min ago", "yesterday" — from the server's naive UTC. */
+export function ago(iso: string, now: number): string {
+  const t = Date.parse(iso.endsWith("Z") ? iso : `${iso}Z`);
+  if (Number.isNaN(t)) return "";
+  const s = Math.max(0, Math.round((now - t) / 1000));
+  if (s < 45) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return s < 172800 ? "yesterday" : `${Math.round(s / 86400)} days ago`;
 }
 
 /** Seconds since the first event, from the server's own timestamps. */

@@ -12,6 +12,8 @@ export type AuthStatus = {
   needs_setup: boolean;
   signups_allowed: boolean;
   min_password_length: number;
+  /** GitHub sign-in: set up on this server, and linked to this account. */
+  github?: { enabled: boolean; connected: boolean };
 };
 
 export type Line = {
@@ -112,10 +114,21 @@ export type ProgressEvent = {
   created_at: string | null;
 };
 
+/** One version of a finished film, in the creator's words. */
+export type FilmVersion = {
+  version: number;
+  created_at: string;
+  current: boolean;
+  kind: "render" | "edit" | "revert" | "rerun" | "other";
+  label: string;
+  detail: string;
+  restored?: number | null;
+};
+
 export type JobSnapshot = {
   project_id: string;
   job_id?: string;
-  kind?: "plan" | "render" | "run_full" | "rerun_phase";
+  kind?: "plan" | "render" | "run_full" | "rerun_phase" | "edit" | "revert";
   prompt?: string | null;
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "unknown";
   phase?: string;

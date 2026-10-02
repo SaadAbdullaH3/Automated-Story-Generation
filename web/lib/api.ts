@@ -6,6 +6,7 @@ import type {
   Card,
   Film,
   FilmPlayback,
+  FilmVersion,
   JobSnapshot,
   RunResponse,
   Storyboard,
@@ -93,6 +94,12 @@ export const api = {
   jobStatus: (pid: string) => request<JobSnapshot>(`/api/pipeline/status/${pid}`),
   cancel: (jobId: string) => post<{ status: string }>(`/api/jobs/${jobId}/cancel`),
 
+  // after the render: change it in a sentence, or go back
+  edit: (pid: string, query: string) => post<RunResponse>(`/api/edit/${pid}`, { query }),
+  versions: (pid: string) => request<FilmVersion[]>(`/api/history/${pid}/film`),
+  goBack: (pid: string, version: number) =>
+    post<{ version: number }>(`/api/history/${pid}/revert/${version}`),
+
   // options
   languages: () => request<string[]>("/api/pipeline/languages"),
   voices: () => request<VoiceCatalogue>("/api/voices/"),
@@ -102,5 +109,11 @@ export const api = {
       voice,
     }),
 };
+
+/** A file that keeps its name across versions, made distinct per version so
+ * the browser doesn't play the cached cut after an edit. */
+export function versioned(url: string, version: number): string {
+  return `${url}${url.includes("?") ? "&" : "?"}v=${version}`;
+}
 
 export type { Card };
