@@ -260,4 +260,10 @@ def pick_motion_for_index(scene_idx: int, shot_idx: int,
     do with what was on screen. Now the shot's job and the scene's tone choose
     it, and the index only breaks ties between adjacent shots.
     """
-    return camera.move_for(shot_kind, tone, scene_idx + shot_idx)
+    # With a mood, the scene opens on that mood's own move and varies from
+    # there. Offsetting by the scene number as well picked an arbitrary entry
+    # from the mood's list instead — in one real render, three scenes of three
+    # different moods all opened on the same drift. Without a mood, the offset
+    # is what keeps adjacent scenes from opening identically.
+    offset = shot_idx if camera.canonical_tone(tone) else scene_idx + shot_idx
+    return camera.move_for(shot_kind, tone, offset)
