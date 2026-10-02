@@ -64,12 +64,12 @@ def _check_engine(name: Optional[str]) -> None:
 
 
 def _accepted(kind: str, project_id: str, status: str, owner: User,
-              **payload) -> RunResponse:
+              max_attempts: int = 2, **payload) -> RunResponse:
     payload = {k: v for k, v in payload.items() if v is not None}
     # Record the owner before the job exists, so a worker can't finish a render
     # into a project nobody is responsible for.
     accounts.register_project(project_id, owner.id)
-    job = jobs.enqueue(kind, project_id, payload)
+    job = jobs.enqueue(kind, project_id, payload, max_attempts=max_attempts)
     log.info("queued %s %s for %s", kind, job.id, project_id)
     return RunResponse(project_id=project_id, job_id=job.id, status=status,
                        websocket=f"/ws/progress/{project_id}")

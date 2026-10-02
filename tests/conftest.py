@@ -161,7 +161,10 @@ def small_project(isolated_dirs):
                          subtitle_language=subtitle_language,
                          width=320, height=180, fps=12, burn_subtitles=burn_subtitles,
                          use_text_to_video=False, use_lip_sync=False, cinematic_post=False)
-        sm.snapshot(state, asset_paths=referenced_files(state), description="initial")
+        # Described the way a real run is, so the history reads it as a film.
+        from agents.orchestrator.workflow import INITIAL_RUN
+        state.stage = "rendered"
+        sm.snapshot(state, asset_paths=referenced_files(state), description=INITIAL_RUN)
         return state, sm
 
     return build

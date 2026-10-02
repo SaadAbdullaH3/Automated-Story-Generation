@@ -9,12 +9,15 @@ from datetime import datetime
 from typing import Callable, Dict, Iterator, List, Optional
 
 from agents.audio_agent import AudioAgent
+from agents.edit_agent import EditAgent
+from agents.edit_agent.describe import STEP_WORDS, describe
 from agents.story_agent import StoryAgent
 from agents.video_agent import VideoAgent
 from shared.assets import asset_url
 from shared.constants import DEFAULT_FPS, DEFAULT_HEIGHT, DEFAULT_WIDTH
 
 from .storyboard_view import cast, image_budget, scene_cards
+from shared.schemas.edit import EditCommand, EditResult
 from shared.schemas.pipeline import PipelineState
 from shared.timeline import LINE_GAP_MS, SCENE_PREROLL_MS, SCENE_TAIL_MS, estimate_line_ms
 from shared.utils.ids import new_project_id
@@ -26,6 +29,17 @@ from .graph import PipelineGraph
 from .state import RunContext
 
 log = get_logger("orchestrator")
+
+
+class EditFailed(RuntimeError):
+    """An edit that could not be applied; the film is left as it was."""
+
+
+# How a version that produced a film is described in the history. The film's
+# version list starts at the first of these.
+INITIAL_RUN = "initial pipeline run"
+RENDERED = "rendered from storyboard"
+RENDER_DESCRIPTIONS = (INITIAL_RUN, RENDERED)
 
 
 @dataclass
@@ -45,6 +59,7 @@ class PipelineOrchestrator:
         self.story = StoryAgent()
         self.audio = AudioAgent()
         self.video = VideoAgent()
+        self.editor = EditAgent(self.sm)
 
     # ---- public ----------------------------------------------------------
 
@@ -102,7 +117,7 @@ class PipelineOrchestrator:
         version = self.sm.snapshot(
             state,
             asset_paths=self._collect_assets(state),
-            description="initial pipeline run",
+            description=INITIAL_RUN,
         )
         emit(ProgressEvent(phase="complete", status="complete", project_id=project_id,
                            message=f"Pipeline finished — version {version.version}",
@@ -269,7 +284,7 @@ class PipelineOrchestrator:
             state.storyboard.approved_at = datetime.utcnow().isoformat()
         state.stage = "rendered"
         version = self.sm.snapshot(state, asset_paths=self._collect_assets(state),
-                                   description="rendered from storyboard")
+                                   description=RENDERED)
         emit(ProgressEvent(phase="complete", status="complete", project_id=project_id,
                            message=f"Film rendered — version {version.version}", progress=1.0,
                            payload={"version": version.version,
@@ -339,6 +354,57 @@ class PipelineOrchestrator:
                            message=f"Phase {phase} re-run, version {version.version}",
                            progress=1.0,
                            payload={"version": version.version}))
+        return state
+
+    # ---- edit and undo (jobs, like everything else that writes a version) --
+
+    def edit(self, project_id: str, query: str,
+             on_event: Optional[Callable[[ProgressEvent], None]] = None,
+             user_id: Optional[str] = None) -> EditResult:
+        """Apply one natural-language edit to a rendered film, as a new version."""
+        emit = on_event or (lambda _e: None)
+        state = self.sm.latest(project_id)
+        names = ({c.id: c.name for c in state.script.characters.characters}
+                 if state and state.script else {})
+        emit(ProgressEvent(phase="edit", status="started", project_id=project_id,
+                           message="Reading your change", progress=0.05,
+                           payload={"query": query}))
+
+        def progress(kind: str, info: dict) -> None:
+            if kind == "understood":
+                summary = describe(info["intent"], names)
+                emit(ProgressEvent(phase="edit", status="understood", project_id=project_id,
+                                   message=f"Understood: {summary}", progress=0.1,
+                                   payload={**info, "summary": summary}))
+            else:
+                emit(ProgressEvent(phase="edit", status="step", project_id=project_id,
+                                   message=STEP_WORDS.get(info["name"], "Working on it"),
+                                   progress=0.1 + 0.85 * info["index"] / max(info["total"], 1),
+                                   payload=info))
+
+        result = self.editor.edit(EditCommand(project_id=project_id, query=query,
+                                              user_id=user_id), on_progress=progress)
+        if not result.success:
+            raise EditFailed(result.error or "the edit could not be applied")
+        emit(ProgressEvent(phase="complete", status="complete", project_id=project_id,
+                           message=f"Edit applied — version {result.new_version}",
+                           progress=1.0,
+                           payload={"version": result.new_version, "kind": "edit",
+                                    "result": result.model_dump(mode="json")}))
+        return result
+
+    def revert(self, project_id: str, version: int,
+               on_event: Optional[Callable[[ProgressEvent], None]] = None) -> PipelineState:
+        """Go back to an earlier version. History stays linear: this is a new version."""
+        emit = on_event or (lambda _e: None)
+        emit(ProgressEvent(phase="revert", status="started", project_id=project_id,
+                           message=f"Going back to version {version}", progress=0.2))
+        state = self.sm.revert(project_id, int(version))
+        emit(ProgressEvent(phase="complete", status="complete", project_id=project_id,
+                           message=f"Back to version {version}, saved as version {state.version}",
+                           progress=1.0,
+                           payload={"version": state.version, "restored": int(version),
+                                    "kind": "revert"}))
         return state
 
     # ---- graph wiring ----------------------------------------------------

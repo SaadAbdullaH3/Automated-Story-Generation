@@ -5,6 +5,10 @@ from pathlib import Path
 from typing import List, Optional
 
 from mcp.base_tool import BaseTool, ToolResult
+from shared.utils.images import ensure_readable_image
+
+# A looped still is an endless input; see shared/utils/images.py.
+CLIP_TIMEOUT_S = 900
 
 
 class FfmpegTool(BaseTool):
@@ -51,6 +55,7 @@ class ImageToClipTool(BaseTool):
             f"format=yuv420p,fps={fps}"
         )
 
+        ensure_readable_image(image_path)
         cmd = ["ffmpeg", "-y", "-loop", "1", "-i", str(image_path)]
         if audio_path and Path(audio_path).exists():
             cmd += ["-i", str(audio_path)]
@@ -67,7 +72,7 @@ class ImageToClipTool(BaseTool):
             cmd += ["-an"]
         cmd.append(str(out))
 
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=CLIP_TIMEOUT_S)
         if proc.returncode != 0:
             return ToolResult(success=False,
                               error=proc.stderr[-2000:],

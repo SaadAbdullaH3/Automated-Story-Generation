@@ -11,6 +11,8 @@ from typing import Any, Dict, List
 
 from shared.schemas.edit import EditIntent
 
+from .vocabulary import ASK_FOR, EDITS, UNCLEAR_MESSAGE, missing
+
 
 @dataclass
 class EditStep:
@@ -21,10 +23,21 @@ class EditStep:
 
 
 def plan(intent: EditIntent) -> List[EditStep]:
+    """Steps for an edit the editor knows how to make — and only those.
+
+    A request it can't name, or one missing what it needs ("change the tone"
+    — to what?), raises with what to say instead. It used to fall through to
+    re-recording or recutting the film unchanged and report success.
+    """
     name = intent.intent
-    target = intent.target
-    scope = intent.scope or "global"
+    if name not in EDITS:
+        raise ValueError(UNCLEAR_MESSAGE)
     params = dict(intent.parameters or {})
+    lacking = missing(name, params)
+    if lacking:
+        raise ValueError(ASK_FOR.get(lacking[0], f"the edit needs a {lacking[0]}"))
+    target = EDITS[name].target
+    scope = intent.scope or "global"
 
     if target == "script":
         return [

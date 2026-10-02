@@ -3,6 +3,11 @@
 Claiming is a single atomic UPDATE, so two workers can never take the same job:
 Postgres skips rows another worker has locked, and on SQLite the second UPDATE
 matches nothing because the row is no longer `queued`.
+
+Jobs for one project run one at a time, in the order they were queued. Every
+job reads the project's latest version and writes the next one, so two edits
+running side by side would both start from the same version and the second
+would quietly undo the first.
 """
 from __future__ import annotations
 
@@ -11,11 +16,12 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from shared import db
 
-JOB_KINDS = ("run_full", "plan", "render", "rerun_phase")
+JOB_KINDS = ("run_full", "plan", "render", "rerun_phase", "edit", "revert")
+UNFINISHED_STATUSES = ("queued", "running")
 TERMINAL_STATUSES = ("succeeded", "failed", "cancelled")
 
 # A worker that has not checked in for this long is assumed dead and its job
@@ -106,10 +112,23 @@ def claim_statement(worker: str, now: datetime, dialect: str = "sqlite",
     match no rows. Built separately from `claim` so the Postgres SQL can be
     compiled and checked without a Postgres server.
     """
+    # A job waits while an older one for the same project is unfinished. What
+    # blocks it is that row's existence, not its lock, so this holds even when
+    # two workers evaluate it at the same instant under SKIP LOCKED.
+    jobs, earlier = db.jobs, db.jobs.alias("earlier")
+    waiting_behind = (
+        select(earlier.c.id)
+        .where(earlier.c.project_id == jobs.c.project_id,
+               earlier.c.status.in_(UNFINISHED_STATUSES),
+               or_(earlier.c.created_at < jobs.c.created_at,
+                   and_(earlier.c.created_at == jobs.c.created_at,
+                        earlier.c.id < jobs.c.id)))
+        .exists()
+    )
     nominee = (
-        select(db.jobs.c.id)
-        .where(db.jobs.c.status == "queued", db.jobs.c.run_after <= now)
-        .order_by(db.jobs.c.priority.asc(), db.jobs.c.created_at.asc())
+        select(jobs.c.id)
+        .where(jobs.c.status == "queued", jobs.c.run_after <= now, ~waiting_behind)
+        .order_by(jobs.c.priority.asc(), jobs.c.created_at.asc())
         .limit(1)
     )
     if kinds:

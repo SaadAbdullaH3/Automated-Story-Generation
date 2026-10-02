@@ -1,6 +1,6 @@
 """Phase 2 schemas — TTS configs, audio segments, and timing manifests."""
 from __future__ import annotations
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -69,3 +69,15 @@ class AudioOutput(BaseModel):
     bgm_track: Optional[str] = Field(default=None, description="path to mixed BGM file")
     master_track: Optional[str] = Field(default=None, description="path to mixed master")
     bgm_enabled: bool = Field(default=True, description="whether BGM is mixed into the master")
+    scene_voices: Dict[str, Dict[str, VoiceConfig]] = Field(
+        default_factory=dict,
+        description="voices changed for one scene only: scene_id -> character_id -> config. "
+                    "A line in that scene is recorded with this instead of its character's voice.",
+    )
+
+    def voice_for(self, scene_id: str, character_id: Optional[str]) -> Optional[VoiceConfig]:
+        """The voice a line is recorded with: the scene's own, else the character's."""
+        override = self.scene_voices.get(scene_id, {}).get(character_id or "")
+        if override:
+            return override
+        return next((v for v in self.voice_configs if v.character_id == character_id), None)

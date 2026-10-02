@@ -71,9 +71,13 @@ def restore_assets(project_id: str, version: int) -> List[str]:
     if not snap_root.exists():
         raise FileNotFoundError(f"snapshot v{version} not found for {project_id}")
     proj_root = ensure_dir(project_dir(project_id))
+    record = snap_root / "state.json"
     restored: List[str] = []
     for src in snap_root.rglob("*"):
-        if src.is_dir():
+        # The version's own record is not a project file. Copying it in made a
+        # revert snapshot it straight back over the new version's record, so
+        # every revert was saved claiming to be the version it went back to.
+        if src.is_dir() or src == record:
             continue
         rel = src.relative_to(snap_root)
         dst = proj_root / rel

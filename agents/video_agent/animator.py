@@ -21,11 +21,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
+from shared.utils.images import ensure_readable_image
 from shared.utils.logging import get_logger
 
 from . import camera
 
 log = get_logger("animator")
+
+# A looped still is an endless input to ffmpeg, so a shot gets a hard limit
+# rather than trusting it to stop. Generous: a long 1080p shot takes ~1 min.
+SHOT_TIMEOUT_S = 900
 
 
 # Camera moves live in camera.py now. Pans were once removed from this list
@@ -103,6 +108,7 @@ def render_shot(shot: Shot, out_path: Path, width: int, height: int, fps: int,
                             width=width, height=height)
     )
 
+    ensure_readable_image(shot.image_path)
     has_audio = bool(shot.audio_path and Path(shot.audio_path).exists())
     cmd = ["ffmpeg", "-y", "-loop", "1", "-i", str(shot.image_path)]
     if has_audio:
@@ -119,7 +125,7 @@ def render_shot(shot: Shot, out_path: Path, width: int, height: int, fps: int,
     else:
         cmd += ["-an"]
     cmd.append(str(out_path))
-    proc = subprocess.run(cmd, capture_output=True)
+    proc = _run_shot(cmd, check=False)
     if proc.returncode != 0:
         # Computing the move at several times the output size is what keeps a
         # pan smooth, but it is also the one memory-hungry part of a render.
@@ -135,8 +141,16 @@ def render_shot(shot: Shot, out_path: Path, width: int, height: int, fps: int,
                                       letterbox=letterbox, width=width, height=height)
         )
         cmd[cmd.index("-vf") + 1] = vf_plain
-        subprocess.run(cmd, check=True, capture_output=True)
+        _run_shot(cmd, check=True)
     return out_path
+
+
+def _run_shot(cmd: List[str], check: bool) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(cmd, capture_output=True, check=check, timeout=SHOT_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"ffmpeg did not finish a shot in {SHOT_TIMEOUT_S}s "
+                           f"({Path(cmd[-1]).name})") from None
 
 
 def assemble_scene(shots: List[Path], out_path: Path,
