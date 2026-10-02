@@ -15,23 +15,34 @@ FROM python:3.11-slim
 # ffmpeg/ffprobe do every bit of the audio and video work. The Noto fonts are
 # what keep burned-in Urdu, Hindi and CJK subtitles from rendering as blank
 # boxes — a missing font doesn't error, it just draws nothing.
+# libsndfile is what Kokoro writes its audio with.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         fontconfig \
         fonts-dejavu-core \
         fonts-noto-core \
         fonts-noto-cjk \
+        libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
+# Kokoro's model files (~340 MB) are not baked in: they are fetched once,
+# checksummed, into the data volume (see the `models` service in compose), so
+# the image stays small and a rebuild never downloads them again.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    DATA_DIR=/app/data \
+    KOKORO_MODEL=/app/data/models/kokoro/kokoro-v1.0.onnx \
+    KOKORO_VOICES=/app/data/models/kokoro/voices-v1.0.bin
 
 WORKDIR /app
 
 # Dependencies first: application edits then don't invalidate this layer.
-COPY requirements.txt requirements-postgres.txt ./
-RUN pip install --no-cache-dir -r requirements.txt -r requirements-postgres.txt
+# Voices (Kokoro) and S3 are optional on a laptop but belong in the image: the
+# open-source voice is the default, and a bucket is a setting away.
+COPY requirements.txt requirements-postgres.txt requirements-voices.txt requirements-s3.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-postgres.txt \
+        -r requirements-voices.txt -r requirements-s3.txt
 
 COPY . .
 # Without this the container would serve the old page: web/out is gitignored,
