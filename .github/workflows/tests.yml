@@ -103,6 +103,9 @@ jobs:
         run: |
           test -f out/index.html
           test -f out/studio/index.html
+          test -f out/docs/index.html
+          test -f out/docs/editing/index.html
+          test -f out/icon.svg
           echo "export OK: $(find out -name '*.html' | wc -l) pages"
 
   image:

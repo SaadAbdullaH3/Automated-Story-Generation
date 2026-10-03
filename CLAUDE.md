@@ -6,9 +6,12 @@ engineering log of every milestone. For an overview, start with
 
 ## What this is
 
-An agentic pipeline that turns one natural-language prompt into a short animated
-film, with natural-language editing and versioned undo — deployed at
-https://139-185-59-132.sslip.io.
+**Dastango** — an agentic pipeline that turns one natural-language prompt into
+a short animated film, with natural-language editing and versioned undo —
+deployed at https://139-185-59-132.sslip.io. Internal names (database, user,
+containers, paths) still say `storygen`; only what people see says Dastango.
+The user guide is the web app's `/docs` pages; the interactive API reference
+moved to `/api/docs`.
 
 Pipeline: **Phase 1 Story** → **Phase 2 Audio** → **Phase 3 Video**, the
 **creator interface** (Next.js static export served by FastAPI), and

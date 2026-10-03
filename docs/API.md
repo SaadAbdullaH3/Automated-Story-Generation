@@ -1,8 +1,8 @@
 # API reference
 
 Everything the web app does goes through this API; the CLI calls the same
-orchestrator directly. FastAPI also serves interactive docs at `/docs` and the
-OpenAPI schema at `/openapi.json`.
+orchestrator directly. The interactive reference is served at `/api/docs` and
+the OpenAPI schema at `/api/openapi.json` (`/docs` is the product's own guide).
 
 **Conventions**
 

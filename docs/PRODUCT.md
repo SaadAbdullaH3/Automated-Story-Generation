@@ -1,4 +1,4 @@
-# Product brief
+# Product brief — Dastango
 
 ## The problem
 

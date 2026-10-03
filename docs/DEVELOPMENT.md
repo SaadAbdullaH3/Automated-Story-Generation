@@ -68,7 +68,7 @@ Outputs go to `data/outputs/<project_id>/`, version snapshots to
 ## Tests
 
 ```bash
-python -m pytest -q        # 387 tests, offline, ~6 minutes
+python -m pytest -q        # 388 tests, offline, ~6 minutes
 ```
 
 See [TESTING.md](TESTING.md) for running against Postgres, S3 or inside the
@@ -94,7 +94,7 @@ state_manager/      append-only versions, file snapshots, revert
 jobs/               queue.py (claim, heartbeat, cancel) · worker.py
 auth/               passwords · sessions · accounts · github · deps
 backend/            FastAPI app, routes, progress WebSocket
-web/                Next.js creator interface (static export)
+web/                Next.js creator interface (static export), including the /docs guide
 frontend/           the original single-page UI, still served at /classic/
 config/             providers.yaml
 deploy/             Caddyfile, prod compose override, setup, backup and restore scripts

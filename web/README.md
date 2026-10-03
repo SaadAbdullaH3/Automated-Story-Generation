@@ -1,4 +1,4 @@
-# web — the creator interface
+# web — the Dastango interface
 
 Next.js 16, App Router, built as a **static export** that FastAPI serves itself.
 One container, one origin, no CORS, no Node in production.
@@ -43,6 +43,8 @@ back to one is itself a new version, so trying it costs nothing.
 | `lib/fonts.ts` | The one place the title face is chosen. `docs/mockups/fonts.html` shows all eight candidates set in place. |
 | `components/studio/Studio.tsx` | Decides which moment you're in purely from server state. |
 | `components/studio/EditPanel.tsx`, `Versions.tsx` | Editing a finished film in a sentence, and going back. Edits are jobs, followed over the same socket as a render. |
+| `app/docs/`, `components/docs/`, `lib/docs.ts` | The public user guide at `/docs`: one registry drives the sidebar, titles, filter and previous/next links; page bodies are in `components/docs/pages/`. |
+| `components/Logo.tsx`, `app/icon.svg`, `app/opengraph-image.png` | The mark (a Mughal arch with the storyteller's lamp), the favicons and the link-preview card. Source files for the brand are in `docs/brand/`. |
 
 ## Decisions
 

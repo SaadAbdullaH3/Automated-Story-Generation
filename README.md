@@ -1,13 +1,23 @@
-# Agentic Video Generator
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/lockup-dark.png">
+    <img alt="Dastango" src="docs/brand/lockup-light.png" height="64">
+  </picture>
+</h1>
 
 **One sentence in. A finished short film out — script, voices, pictures,
 camera moves, music and subtitles. Then change it by saying what you want.**
 
+A *dastango* is a teller of *dastans*, the long tales once performed by
+lamplight in the old cities of South Asia. The mark is a Mughal arch — the
+storyteller's niche, a stage, a screen — with the teller's lamp inside it.
+
 [![tests](https://github.com/SaadAbdullaH3/Automated-Story-Generation/actions/workflows/tests.yml/badge.svg)](https://github.com/SaadAbdullaH3/Automated-Story-Generation/actions/workflows/tests.yml)
-![tests](https://img.shields.io/badge/tests-387-brightgreen)
+![tests](https://img.shields.io/badge/tests-388-brightgreen)
 ![python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
 ![next.js](https://img.shields.io/badge/next.js-16-black)
 ![cost](https://img.shields.io/badge/running%20cost-%240-brightgreen)
+![licence](https://img.shields.io/badge/licence-MIT-blue)
 [![live](https://img.shields.io/badge/live-139--185--59--132.sslip.io-2563eb)](https://139-185-59-132.sslip.io)
 
 ![A flooded city at dawn, the camera drifting over it, Urdu subtitles burned into the picture](docs/demo.gif)
@@ -129,6 +139,13 @@ docker compose up --build --scale worker=3
 
 ## Documentation
 
+**For people making films:** the guide on the live site —
+[139-185-59-132.sslip.io/docs](https://139-185-59-132.sslip.io/docs/) — covers
+writing a prompt, the storyboard, rendering, every change you can ask for,
+voices, subtitles and accounts.
+
+**For engineers:**
+
 | | |
 |---|---|
 | [Product brief](docs/PRODUCT.md) | The problem, who it is for, MVP scope, and how success is measured |
@@ -139,11 +156,15 @@ docker compose up --build --scale worker=3
 | [API reference](docs/API.md) | REST endpoints and the progress WebSocket |
 | [Models and providers](docs/PROVIDERS.md) | Configuring which model does what, free keys, voices, paid options |
 | [Development](docs/DEVELOPMENT.md) | Setup, the CLI, repository layout, conventions, extending it |
-| [Testing](docs/TESTING.md) | How 387 offline tests are built, what they cover, CI |
+| [Testing](docs/TESTING.md) | How 388 offline tests are built, what they cover, CI |
 | [Security](SECURITY.md) | Threat model, authentication, authorisation, known gaps |
 | [Deployment runbook](deploy/README.md) | Oracle Cloud VM, HTTPS, backups and restore |
 | [Roadmap](docs/ROADMAP.md) | Known limitations and what comes next |
 | [Changelog](CHANGELOG.md) | Milestones M0–M9 and what each measured |
+
+## Licence
+
+[MIT](LICENSE).
 
 ## Built with
 

@@ -49,7 +49,7 @@ flowchart TB
 
     subgraph ops["Delivery and operations"]
         direction LR
-        docker["Docker<br/>multi-stage, non-root"] ~~~ compose["Docker Compose<br/>5 services"] ~~~ oci["Oracle Cloud<br/>A1 arm64 · free"] ~~~ gha["GitHub Actions<br/>4 jobs"] ~~~ tests["pytest · moto<br/>387 offline tests"]
+        docker["Docker<br/>multi-stage, non-root"] ~~~ compose["Docker Compose<br/>5 services"] ~~~ oci["Oracle Cloud<br/>A1 arm64 · free"] ~~~ gha["GitHub Actions<br/>4 jobs"] ~~~ tests["pytest · moto<br/>388 offline tests"]
     end
 
     exp --> edge --> apiL --> exec --> media --> data --> ops

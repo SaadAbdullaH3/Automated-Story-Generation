@@ -1,6 +1,6 @@
 # Testing and quality
 
-**387 tests**, fully offline, on Linux and Windows in CI — plus the checks
+**388 tests**, fully offline, on Linux and Windows in CI — plus the checks
 that only mean something inside the production image, run inside it.
 
 ## How the suite is built
@@ -61,7 +61,7 @@ docker run --rm -e PIPELINE_SKIP_DOTENV=1 storygen:local python -m pytest -q \
 | Picture, sync and subtitles | 105 | Final frame count equals the timeline; every line starts on a cut; camera moves follow shot and tone; pan smoothness; subtitle fonts burn every script without missing-glyph boxes; shots render in parallel and still cut each scene from its own shots |
 | Editing and versions | 71 | 18 phrasings classified offline, plus scope and parameter extraction; closed vocabulary rejects invented intents; edits as jobs, one per film at a time; a failed edit restores the saved files; revert is byte-identical and saved as a new version |
 | Providers | 21 | Chains, credential filtering, fall-through, retries, mock fallback, the answering provider is the one reported |
-| API, jobs and accounts | 85 | Atomic claims, heartbeats, requeue, cancellation; sessions, lockout, timing-uniform login, 404 for others' projects, asset traversal; GitHub OAuth against a fake GitHub (state, email refusal, disabled accounts) |
+| API, jobs and accounts | 86 | Atomic claims, heartbeats, requeue, cancellation; sessions, lockout, timing-uniform login, 404 for others' projects, asset traversal; GitHub OAuth against a fake GitHub (state, email refusal, disabled accounts) |
 | Deployment and storage | 29 | Local and S3 assets; worker liveness; Kokoro download verified by SHA-256; first-boot schema race; off-machine backup push and pull against moto |
 | End to end | 1 | Prompt to MP4 in mock mode |
 

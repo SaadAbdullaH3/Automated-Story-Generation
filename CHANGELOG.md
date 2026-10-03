@@ -4,6 +4,19 @@ The project is built in milestones. Each ends with a pull request, CI green,
 and a measured result; the detailed engineering log for every milestone is in
 [CLAUDE.md](CLAUDE.md).
 
+## Unreleased — Dastango
+
+- A name and a mark. *Dastango*, a teller of dastans; the logo is a Mughal
+  arch — the storyteller's niche, a stage, a screen — around the teller's
+  lamp, in the interface's one accent colour. Favicons, an iOS icon and a
+  link-preview card are generated from the same vector.
+- A user guide inside the product at `/docs`: twelve public pages with a
+  sidebar, a filter (`/` to focus it), an "On this page" list and
+  previous/next links. Every edit phrasing it shows was run through the
+  classifier first. FastAPI's interactive reference moved to `/api/docs`.
+- The repository's documentation for engineers (architecture, agents,
+  frameworks, decisions, API, testing, security), and an MIT licence.
+
 ## M9 — Deployed (2026-10-03)
 
 Live at https://139-185-59-132.sslip.io on Oracle Cloud's Always Free ARM VM.

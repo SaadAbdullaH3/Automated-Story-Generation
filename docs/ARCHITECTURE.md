@@ -29,7 +29,7 @@ in something that works offline.
 flowchart LR
     creator(["Creator<br/>browser or CLI"])
 
-    subgraph product["Agentic Video Generator"]
+    subgraph product["Dastango"]
         app["Web app · API · workers<br/>Kokoro voices and ffmpeg run locally"]
     end
 

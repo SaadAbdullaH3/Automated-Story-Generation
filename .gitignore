@@ -43,4 +43,4 @@ data/benchmarks/
 data/models/
 
 # Local tool settings (Claude Code)
-.claude/settings.local.json
+.claude/
