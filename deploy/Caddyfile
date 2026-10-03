@@ -24,4 +24,13 @@
 		X-Frame-Options "DENY"
 		-Server
 	}
+
+	# Without a Cache-Control header browsers guess, and a returning visitor
+	# can be shown yesterday's interface after a deploy. Pages are revalidated
+	# on every visit (a few bytes when unchanged); Next's build files carry a
+	# content hash in their names, so they can be kept for a year. The API,
+	# the WebSocket and the films set their own rules.
+	@pages not path /_next/static/* /api/* /ws/* /assets/*
+	header @pages ?Cache-Control "no-cache"
+	header /_next/static/* Cache-Control "public, max-age=31536000, immutable"
 }
