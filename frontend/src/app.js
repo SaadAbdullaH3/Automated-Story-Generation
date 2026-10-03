@@ -1,4 +1,4 @@
-/* Agentic Video Generator — single-page UI */
+/* Dastango — the original single-page UI, kept at /classic/ */
 
 const $ = (id) => document.getElementById(id);
 

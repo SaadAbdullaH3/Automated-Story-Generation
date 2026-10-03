@@ -52,3 +52,17 @@
   height: 1px;
   background: var(--line);
 }
+
+.docs {
+  margin: 4px 0 0;
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--faint);
+}
+.docs a {
+  color: var(--muted);
+  text-underline-offset: 3px;
+}
+.docs a:hover {
+  color: var(--fg);
+}

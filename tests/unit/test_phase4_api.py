@@ -22,7 +22,17 @@ def test_index_served(client):
     r = client.get("/")
     assert r.status_code == 200
     # Either the actual SPA or the fallback message.
-    assert "Agentic" in r.text
+    assert "Dastango" in r.text
+
+
+def test_api_reference_lives_under_api(client):
+    """/docs is the product's own guide, so FastAPI's reference moved to /api."""
+    schema = client.get("/api/openapi.json")
+    assert schema.status_code == 200 and schema.json()["info"]["title"] == "Dastango"
+    assert "swagger" in client.get("/api/docs").text.lower()
+    assert client.get("/openapi.json").status_code == 404
+    r = client.get("/docs")
+    assert "swagger" not in r.text.lower()
 
 
 def test_classify_endpoint(client):
