@@ -34,7 +34,8 @@ and subtitle in it was generated.</sub>
    film itself.
 
 It runs live at **[139-185-59-132.sslip.io](https://139-185-59-132.sslip.io)**
-on a free cloud VM (accounts are invitation-only; the clip above is a real run).
+on a free cloud VM. Sign-ups (email, or GitHub) are open during review
+periods and closed otherwise; the clip above is a real run.
 
 ## How it works
 
