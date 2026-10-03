@@ -5,7 +5,7 @@ music, subtitles and cuts.**
 
 [![tests](https://github.com/SaadAbdullaH3/Automated-Story-Generation/actions/workflows/tests.yml/badge.svg)](https://github.com/SaadAbdullaH3/Automated-Story-Generation/actions/workflows/tests.yml)
 ![python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
-![tests](https://img.shields.io/badge/tests-371%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-382%20passing-brightgreen)
 ![cost](https://img.shields.io/badge/running%20cost-%240-brightgreen)
 
 ![A flooded city at dawn, the camera drifting over it, Urdu subtitles burned into the picture](docs/demo.gif)

@@ -629,8 +629,38 @@ fresh empty stack and `restore.sh bucket` brought back the account, its
 version and all 8 files, and the account signed in and saw its film. `LATEST`
 is written last, so a push cut short still names the previous whole backup.
 
-Still to do in M9: the VM itself (waiting on the Oracle account) and native
-render timings there.
+**Live on the VM** (2026-10-03): Oracle Always Free A1 in Dubai, 2 OCPU /
+12 GB, Ubuntu 24.04 aarch64, at `https://139-185-59-132.sslip.io`. A VCN made
+with the console's plain "Create VCN" has no internet gateway or route, and
+then the instance form's public-IP switch won't turn on (the runbook now
+starts with the VCN wizard). `setup-vm.sh` worked first time; the native
+image build took 4 min 5 s (21.6 min under QEMU); Let's Encrypt issued for
+the sslip.io name in ~4 s; first boot on a fresh Postgres with 0 restarts.
+
+Measured rather than estimated: a first real film (44.7 s, 5 scenes, Kokoro,
+Urdu burned in, every image from Cloudflare) planned in 18 s and rendered in
+398 s, 297 s of it shots. The offline benchmark took 188 s against the
+laptop's 47.5 s — an A1 core is ~2.8× slower than a laptop core at this, not
+the ~2× guessed — and CPU sampling showed why shots dominate: rendered one at
+a time, they held ~130% of 200%, since zoompan is single-threaded. **Shots now
+render side by side** across all changed scenes (one per core, at most 4,
+`SHOT_WORKERS`): the same benchmark 136 s, shot step 168 s → 116 s, CPU ~196%,
+peak memory 471 MB.
+
+Using it found two bugs:
+- **The API died once, exit code 1 and no traceback**, as Saad previewed
+  voices. "System voices" (pyttsx3) after a Kokoro sample: Kokoro loads a
+  bundled espeak into the process, pyttsx3 then started that copy without a
+  data path, and espeak answers a missing data file by calling `exit(1)`. A
+  render falling back to pyttsx3 in a worker that had used Kokoro would have
+  killed the worker the same way. In the image pyttsx3 also had no espeak of
+  its own and returned silence as success. Now: pyttsx3 refuses on Linux
+  without a system espeak (and the voice picker says why), and loading Kokoro
+  sets `ESPEAK_DATA_PATH`. `test_m9_system_voices.py` reproduces it in a
+  subprocess with a stand-in Kokoro that starts espeak the same way; run in
+  the image, each half of the fix is shown to be needed, and CI runs it there.
+- The translation log named the first provider in the chain ("via
+  llm:gemini") when Gemini had 503'd and Groq translated.
 
 ## Known issues / next milestones
 
@@ -674,7 +704,12 @@ render timings there.
   below).
 - Docker Desktop on Windows reaches bind-mounted `data/` through a slow
   file-sharing layer, so container timings on the laptop (a scene-2 voice
-  edit took 100 s) say little about a Linux host's own disk. Measure on the VM.
+  edit took 100 s) say little about a Linux host's own disk. The VM's
+  numbers are in M9.
+- Renders on the free VM are CPU-bound (~2.8× slower per core than the
+  laptop). The remaining lever is `SUPERSAMPLE` 3 → 2, which trades some pan
+  smoothness for speed; not taken.
+- Kokoro's first line in a fresh worker loads its model (~30 s on the VM).
 - An edit that rewrites the script starts its voices fresh (scene 2 is a
   different scene afterwards); only the voice engine carries over.
 - Versions saved by a revert before M8 carry the wrong `version` inside their

@@ -5,12 +5,11 @@ small Linux machine with Docker Compose. The target is Oracle Cloud's Always
 Free ARM VM: **2 OCPUs and 12 GB of RAM** (cut from 4/24 in June 2026), free
 for good, with no card charge as long as you stay on Always Free resources.
 
-How fast it renders, measured on the laptop pinned to two cores: a 20 s,
-3-scene film's rendering went from 47.5 s to 67.7 s. The slowest step
-(ffmpeg's camera-move filter) uses one core however many there are. Oracle's
-ARM cores are slower per core than a Ryzen's, so expect roughly twice the
-laptop's time end to end — about 3–4 minutes for a short film. Planning (the
-storyboard) is mostly waiting on the model and image APIs and feels the same.
+How fast it is, measured on that VM: a storyboard takes about 20 s (it is
+mostly waiting on the model and image APIs). Rendering is CPU work, and an A1
+core is ~2.8× slower than a laptop's at it: the offline benchmark — a 25 s,
+3-scene film — renders in **136 s**, drawing two shots at once to use both
+cores (188 s one at a time).
 
 ## 1. The VM (Oracle console)
 
@@ -18,18 +17,26 @@ storyboard) is mostly waiting on the model and image APIs and feels the same.
    card to verify you; Always Free resources are never charged. **Choose the
    home region carefully — it can't be changed**, and ARM capacity varies by
    region.
-2. **Compute → Instances → Create instance**
+2. **The network first** — Networking → Virtual cloud networks → **Start VCN
+   Wizard → Create VCN with Internet Connectivity**. It makes the public
+   subnet *and* the internet gateway and route a public address needs. (A VCN
+   made any other way has neither: the instance form's "assign a public IPv4
+   address" switch then won't turn on, and even with an address nothing could
+   reach the VM. If yours lacks them: Gateways → Create Internet Gateway, then
+   the subnet's route table → rule `0.0.0.0/0` → that gateway.)
+3. **Compute → Instances → Create instance**
    - Image: **Canonical Ubuntu 24.04** (the aarch64 build is picked for you
      once the shape is ARM).
    - Shape: **Ampere → VM.Standard.A1.Flex**, 2 OCPUs, 12 GB memory.
-   - Networking: create a new VCN with a **public subnet**, and assign a
-     public IPv4 address.
+   - Networking: **select the existing VCN** and its public subnet, and turn
+     on the public IPv4 address.
    - SSH key: paste the public key you made for this (see below).
    - Boot volume: 100 GB is plenty (Always Free covers 200 GB in total).
 
    "Out of host capacity" is common for A1 shapes: try another availability
-   domain, or again later.
-3. **Open the web ports** — Networking → Virtual cloud networks → your VCN →
+   domain, or again later. The cost estimate on the review page ignores the
+   free tier (it says so); 100 GB of the 200 GB free storage is covered.
+4. **Open the web ports** — Networking → Virtual cloud networks → your VCN →
    the subnet's security list → *Add ingress rules*, source `0.0.0.0/0`:
    TCP 80, TCP 443, and UDP 443 (HTTP/3). The VM's own firewall is opened by
    the setup script; both have to allow a port.
