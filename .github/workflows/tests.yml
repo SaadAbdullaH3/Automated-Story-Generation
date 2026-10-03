@@ -132,13 +132,14 @@ jobs:
           "import kokoro_onnx, soundfile, onnxruntime, psycopg, boto3, argon2;
           print('voices, Postgres and S3 drivers present')"
 
-      - name: Subtitles render in every script, and first boot doesn't race
-        # Run inside the image: these are about its fonts and its database
-        # drivers, not the runner's.
+      - name: Subtitles render in every script, first boot doesn't race, voices can't crash it
+        # Run inside the image: these are about its fonts, its database
+        # drivers and its voice libraries, not the runner's.
         run: >
           docker run --rm -e PIPELINE_SKIP_DOTENV=1 storygen:local
           python -m pytest -q -p no:cacheprovider
           tests/unit/test_m9_subtitle_fonts.py tests/unit/test_m9_schema_race.py
+          tests/unit/test_m9_system_voices.py
 
       - name: The whole stack starts on a fresh database and answers
         env:

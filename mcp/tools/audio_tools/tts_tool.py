@@ -43,6 +43,20 @@ def edge_prosody(rate: int = BASE_RATE_WPM, pitch: int = 0,
     }
 
 
+def _point_espeak_at_its_data() -> None:
+    """Kokoro loads a bundled espeak into this process and tells it where its
+    data is. Anything else that starts espeak here without saying so gets the
+    data path baked in on the machine that built the wheel, and espeak calls
+    exit(1) when that isn't there. ESPEAK_DATA_PATH is where espeak looks
+    first, so every later start finds real data."""
+    try:
+        import espeakng_loader
+    except ImportError:
+        return
+    os.environ.setdefault("ESPEAK_DATA_PATH",
+                          str(Path(espeakng_loader.get_data_path()).parent))
+
+
 class TtsTool(BaseTool):
     name = "audio.tts"
     description = "Synthesize speech from text into a wav/mp3 file."
@@ -168,6 +182,7 @@ class TtsTool(BaseTool):
         global _KOKORO
         if _KOKORO is None:
             log.info("loading Kokoro voice model (first call only)")
+            _point_espeak_at_its_data()
             _KOKORO = Kokoro(model, voices)
         samples, sample_rate = _KOKORO.create(
             text, voice=voice or "af_heart", speed=max(0.5, min(2.0, rate / BASE_RATE_WPM)),
@@ -179,6 +194,13 @@ class TtsTool(BaseTool):
         return out
 
     def _pyttsx3(self, text: str, out: Path, rate: int = 175, voice: str = "") -> Path:
+        from shared.voices import system_voices_missing
+        missing = system_voices_missing()
+        if missing:
+            # Before pyttsx3.init(): on Linux that would start whatever espeak
+            # is already in the process — Kokoro's — and espeak exits the
+            # whole process when it can't find its data.
+            raise RuntimeError(missing)
         import pyttsx3
         engine = pyttsx3.init()
         engine.setProperty("rate", rate)
