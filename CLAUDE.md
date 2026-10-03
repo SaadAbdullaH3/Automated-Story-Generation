@@ -699,9 +699,10 @@ Using it found two bugs:
   UI, though the API and the data model both support it.
 - GitHub can be connected but not disconnected from the UI yet (an account
   made through GitHub has no password, so disconnecting needs a set-password
-  step first). GitHub's callback must match the registered URL exactly:
-  open the app at `http://localhost:8000`, not `127.0.0.1`, or pin
-  `GITHUB_CALLBACK_URL`.
+  step first). GitHub's callback must match a registered redirect URI
+  exactly: open the app at `http://localhost:8000`, not `127.0.0.1`, or pin
+  `GITHUB_CALLBACK_URL`. One OAuth app takes up to ten redirect URIs, so the
+  laptop and the server share it.
 - Off-machine backups mirror only the newest films; older database dumps are
   kept, but restoring an old one pairs it with today's films. R2's free 10 GB
   will eventually be outgrown by films + versions (snapshot storage growth,

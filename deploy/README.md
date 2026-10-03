@@ -80,10 +80,14 @@ won't run there) and downloads the Kokoro voice model into `data/` once,
 checking its SHA-256. Then open `https://<DOMAIN>`: the first account made is
 the administrator.
 
-**GitHub sign-in** needs its own OAuth app for the server, because an OAuth
-app has one callback URL: register a second one with
-`https://<DOMAIN>/api/auth/github/callback` and put *its* id and secret in the
-server's `.env`.
+**GitHub sign-in:** in the OAuth app's settings, add a redirect URI
+`https://<DOMAIN>/api/auth/github/callback` (an app takes up to ten, so the
+laptop's `http://localhost:8000/...` one can stay; the match is exact — a
+stray character and GitHub refuses with "redirect_uri is not associated with
+this application"). Put the app's id and secret in the server's `.env` and
+restart the API. Then sign in with your password and use **Connect GitHub** in
+the top bar once: a GitHub sign-in never joins an existing account by email,
+and with sign-ups closed it won't make a new one.
 
 ## What runs
 
