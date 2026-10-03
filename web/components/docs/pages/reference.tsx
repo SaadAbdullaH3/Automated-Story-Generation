@@ -145,8 +145,8 @@ export function Developers() {
   return (
     <>
       <p>
-        Dastango is open source under the MIT licence. Its source, and the documentation of how it is built,
-        are on <a href={REPO_URL}>GitHub</a>.
+        Dastango&rsquo;s source, and the documentation of how it is built, are on{" "}
+        <a href={REPO_URL}>GitHub</a>.
       </p>
 
       <H2 id="architecture">How it is built</H2>

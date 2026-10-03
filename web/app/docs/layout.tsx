@@ -41,7 +41,6 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
               Source on GitHub
             </a>
             <a href="/api/docs">API reference</a>
-            <span>MIT licence</span>
           </footer>
         </main>
         <aside className={styles.aside}>

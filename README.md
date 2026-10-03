@@ -17,7 +17,6 @@ storyteller's niche, a stage, a screen — with the teller's lamp inside it.
 ![python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
 ![next.js](https://img.shields.io/badge/next.js-16-black)
 ![cost](https://img.shields.io/badge/running%20cost-%240-brightgreen)
-![licence](https://img.shields.io/badge/licence-MIT-blue)
 [![live](https://img.shields.io/badge/live-139--185--59--132.sslip.io-2563eb)](https://139-185-59-132.sslip.io)
 
 ![A flooded city at dawn, the camera drifting over it, Urdu subtitles burned into the picture](docs/demo.gif)
@@ -161,10 +160,6 @@ voices, subtitles and accounts.
 | [Deployment runbook](deploy/README.md) | Oracle Cloud VM, HTTPS, backups and restore |
 | [Roadmap](docs/ROADMAP.md) | Known limitations and what comes next |
 | [Changelog](CHANGELOG.md) | Milestones M0–M9 and what each measured |
-
-## Licence
-
-[MIT](LICENSE).
 
 ## Built with
 
