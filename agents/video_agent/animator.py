@@ -15,6 +15,7 @@ Two key upgrades over the basic ken-burns clip:
 """
 from __future__ import annotations
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -31,6 +32,30 @@ log = get_logger("animator")
 # A looped still is an endless input to ffmpeg, so a shot gets a hard limit
 # rather than trusting it to stop. Generous: a long 1080p shot takes ~1 min.
 SHOT_TIMEOUT_S = 900
+
+# Each shot at once holds a supersampled frame (up to 8.5 MP) in memory.
+MAX_SHOT_WORKERS = 4
+
+
+def shot_workers() -> int:
+    """How many shots render at once: one per core this process may use.
+
+    A shot keeps about one core busy — zoompan, which makes the camera move,
+    runs on a single thread, and the encoder adds roughly a third of another.
+    Rendered one at a time on the 2-core server, the CPU sat at ~130% of 200%
+    for the three quarters of a render that is shots. SHOT_WORKERS overrides.
+    """
+    configured = os.getenv("SHOT_WORKERS", "").strip()
+    if configured:
+        try:
+            return max(1, int(configured))
+        except ValueError:
+            log.warning("SHOT_WORKERS=%r is not a number — using the core count", configured)
+    try:
+        cores = len(os.sched_getaffinity(0))      # what a container is actually given
+    except AttributeError:                         # not on Windows
+        cores = os.cpu_count() or 1
+    return max(1, min(cores, MAX_SHOT_WORKERS))
 
 
 # Camera moves live in camera.py now. Pans were once removed from this list
