@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from sqlalchemy import (JSON, Boolean, Column, DateTime, Float, Index, Integer,
-                        MetaData, String, Table, Text, create_engine, event)
+                        MetaData, String, Table, Text, create_engine, event, text)
 from sqlalchemy.engine import Engine
 
 from shared import constants
@@ -193,9 +193,46 @@ def get_engine(url: Optional[str] = None) -> Engine:
     else:
         engine = create_engine(url, future=True, pool_pre_ping=True)
 
-    metadata.create_all(engine)
+    _create_schema(engine)
     _engines[url] = engine
     return engine
+
+
+# Any constant: names the lock the processes take turns on.
+SCHEMA_LOCK = 0x53_54_47_4E   # "STGN"
+
+
+def _create_schema(engine: Engine) -> None:
+    """Create whatever tables are missing, safely when several processes do it at once.
+
+    On a fresh Postgres the API and the workers start together and all of them
+    create the schema; without a lock, every one but the first crashed with a
+    duplicate key in Postgres' own catalog. The advisory lock makes them take
+    turns, and the ones after the first find the tables there.
+
+    SQLite has no such lock, and two processes can both see a table missing
+    and both create it ("table jobs already exists" — about one start in six
+    in the test), or both hold a read lock and want to write, which SQLite
+    refuses at once rather than wait ("database is locked", busy timeout or
+    not). The loser just tries again: create_all re-checks and skips what
+    exists.
+    """
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as conn:
+            conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": SCHEMA_LOCK})
+            metadata.create_all(conn)
+        return
+    import time
+    from sqlalchemy.exc import OperationalError
+    for attempt in range(8):
+        try:
+            metadata.create_all(engine)
+            return
+        except OperationalError as e:
+            racing = "already exists" in str(e) or "database is locked" in str(e)
+            if not racing or attempt == 7:
+                raise
+            time.sleep(0.1 * (attempt + 1))
 
 
 def _sqlite_pragmas(dbapi_conn, _record) -> None:

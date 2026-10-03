@@ -40,8 +40,8 @@ replicate>=1.0.0         # Replicate Wav2Lip + SVD (set REPLICATE_API_TOKEN in .
 
 # Optional / nice-to-have
 pyttsx3>=2.90        # offline TTS fallback
-moviepy>=1.0.3       # not used by default; available for advanced edits
-opencv-python>=4.8   # not required for default filters but enables advanced ones
+# moviepy and opencv-python were listed as optional extras; nothing imports
+# either, and together they put ~265 MB (and a second ffmpeg) in the image.
 numpy>=1.26          # used by some optional paths
 
 # Test + dev

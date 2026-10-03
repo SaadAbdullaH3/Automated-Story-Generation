@@ -74,7 +74,8 @@ def test_burned_subtitles_use_a_font_that_has_the_script(tmp_path):
                         language="Urdu")
     assert res.success, res.error
     assert res.metadata["font"] == fonts.font_for("Urdu")
-    assert res.metadata["font"] in fonts.WIDE_SCRIPT_FONTS
+    # That the font actually draws Urdu is test_m9_subtitle_fonts.py's job: it
+    # renders it. A name on a list proved nothing — the wrong one was on it.
 
 
 def test_subtitle_tracks_endpoint(small_project, fake_translation):

@@ -28,7 +28,7 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from agents.story_agent.appearance import build_appearance_lock, character_seed
 from mcp.tool_executor import ToolExecutor
@@ -50,7 +50,7 @@ from shared.utils.parallel import run_jobs
 from shared.utils.logging import get_logger
 
 from .animator import (
-    Shot as RenderShot, assemble_scene, pick_motion_for_index, render_shot,
+    Shot as RenderShot, assemble_scene, pick_motion_for_index, render_shot, shot_workers,
 )
 
 
@@ -190,25 +190,31 @@ class VideoAgent:
                 if seg.kind == "dialogue":
                     segs_by_scene.setdefault(seg.scene_id, []).append(seg)
 
-        rendered = reused = 0
+        # Plan every scene before rendering any, so the shots of all the scenes
+        # that changed render together rather than one scene at a time.
+        plans = []
         last_index = len(video.frames) - 1
         for i, frame in enumerate(video.frames):
-            timing = timings[frame.scene_id]
-            planned = self._plan_scene(state, scene_by_id[frame.scene_id], frame, timing,
+            planned = self._plan_scene(state, scene_by_id[frame.scene_id], frame,
+                                       timings[frame.scene_id],
                                        segs_by_scene.get(frame.scene_id, []),
                                        is_last_scene=(i == last_index))
             signature = self._signature(planned, video)
             clip_ok = frame.clip_path and Path(frame.clip_path).exists()
-            if not force and clip_ok and frame.plan_signature == signature:
-                reused += 1
-            else:
-                frame.clip_path = str(self._render_scene(state, frame.scene_id, planned))
+            stale = force or not clip_ok or frame.plan_signature != signature
+            plans.append((frame, planned, signature, stale))
+
+        clips = self._render_scenes(state, [(f.scene_id, planned)
+                                            for f, planned, _, stale in plans if stale])
+        for frame, planned, signature, stale in plans:
+            if stale:
+                frame.clip_path = str(clips[frame.scene_id])
                 frame.plan_signature = signature
-                rendered += 1
             frame.shots = [self._to_shot(frame.scene_id, p) for p in planned]
-            frame.start_ms = timing.start_ms
-            frame.duration_ms = timing.duration_ms
-        log.info("composition: %d scene(s) rendered, %d reused", rendered, reused)
+            frame.start_ms = timings[frame.scene_id].start_ms
+            frame.duration_ms = timings[frame.scene_id].duration_ms
+        log.info("composition: %d scene(s) rendered, %d reused",
+                 len(clips), len(plans) - len(clips))
 
         final = self._compose_final(state)
         video.final_video_path = str(final)
@@ -583,8 +589,9 @@ class VideoAgent:
 
     # ---- rendering -------------------------------------------------------
 
-    def _render_scene(self, state: PipelineState, scene_id: str,
-                      planned: List[PlannedShot]) -> Path:
+    def _render_scenes(self, state: PipelineState,
+                       scenes: List[Tuple[str, List[PlannedShot]]]) -> Dict[str, Path]:
+        """Render these scenes' shots, several at once, then cut each scene."""
         video = state.video
         proj = project_dir(state.project_id)
         shot_dir = proj / "video" / "shots"
@@ -594,27 +601,32 @@ class VideoAgent:
 
         story = state.script.story if state.script else None
         visual_style = getattr(story, "visual_style", "") or ""
-        scene_obj = next((sc for sc in (state.script.scenes if state.script else [])
-                          if sc.scene_id == scene_id), None)
-        scene_tone = getattr(scene_obj, "tone", "") or ""
+        tones = {sc.scene_id: getattr(sc, "tone", "") or ""
+                 for sc in (state.script.scenes if state.script else [])}
 
-        paths: List[Path] = []
-        for p in planned:
-            rs = RenderShot(image_path=p.source, duration_ms=p.end_ms - p.start_ms,
-                            motion=p.motion, frames=p.render_frames, is_lip_sync=p.is_video,
-                            visual_style=visual_style, tone=scene_tone)
-            paths.append(render_shot(rs, shot_dir / f"{p.shot_id}.mp4",
-                                     video.width, video.height, video.fps,
-                                     add_grain=video.cinematic_post,
-                                     add_vignette=video.cinematic_post))
-        scene_clip = scene_dir / f"{scene_id}.mp4"
-        assemble_scene(
-            paths, scene_clip,
-            crossfade_ms=xfade_frames(SHOT_XFADE_MS, video.fps) * 1000.0 / video.fps,
-            durations_s=[p.render_frames / video.fps for p in planned],
-        )
-        log.info("  scene %s composed (%d shots)", scene_id, len(planned))
-        return scene_clip
+        # One pool for every shot of every scene: a pool per scene would leave
+        # cores idle while a 3-shot scene finished its last shot.
+        jobs = []
+        for scene_id, planned in scenes:
+            for p in planned:
+                rs = RenderShot(image_path=p.source, duration_ms=p.end_ms - p.start_ms,
+                                motion=p.motion, frames=p.render_frames,
+                                is_lip_sync=p.is_video, visual_style=visual_style,
+                                tone=tones.get(scene_id, ""))
+                jobs.append((render_shot, (rs, shot_dir / f"{p.shot_id}.mp4",
+                                           video.width, video.height, video.fps,
+                                           video.cinematic_post, video.cinematic_post)))
+        paths = iter(run_jobs(jobs, workers=shot_workers(), label="shots"))
+
+        clips: Dict[str, Path] = {}
+        for scene_id, planned in scenes:
+            clips[scene_id] = assemble_scene(
+                [next(paths) for _ in planned], scene_dir / f"{scene_id}.mp4",
+                crossfade_ms=xfade_frames(SHOT_XFADE_MS, video.fps) * 1000.0 / video.fps,
+                durations_s=[p.render_frames / video.fps for p in planned],
+            )
+            log.info("  scene %s composed (%d shots)", scene_id, len(planned))
+        return clips
 
     def _compose_final(self, state: PipelineState) -> Path:
         video = state.video

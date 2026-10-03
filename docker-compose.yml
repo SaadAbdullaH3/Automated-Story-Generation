@@ -6,8 +6,32 @@
 # API keys come from .env (same file the CLI uses). Without it everything still
 # runs on the offline providers — template script, placeholder images.
 #
-# The two services share ./data so the worker's output is what the API serves.
+# The services share ./data so the worker's output is what the API serves.
 # That works on one host; across hosts the assets need object storage.
+# DATA_PATH and HOST_PORT move them — e.g. a throwaway stack beside a running
+# app: DATA_PATH=/tmp/x HOST_PORT=8040 docker compose -p storygen-test up
+
+x-app: &app
+  build: .
+  image: storygen:local
+  env_file:
+    - path: .env
+      required: false
+  # Set here, not only in the image: these beat .env, which on a laptop holds
+  # host paths (C:\...) that mean nothing inside the container.
+  environment: &app-env
+    DATABASE_URL: postgresql+psycopg://storygen:storygen@db:5432/storygen
+    DATA_DIR: /app/data
+    KOKORO_MODEL: /app/data/models/kokoro/kokoro-v1.0.onnx
+    KOKORO_VOICES: /app/data/models/kokoro/voices-v1.0.bin
+  volumes:
+    - ${DATA_PATH:-./data}:/app/data
+  restart: unless-stopped
+  depends_on:
+    db:
+      condition: service_healthy
+    models:
+      condition: service_completed_successfully
 
 services:
   db:
@@ -18,6 +42,7 @@ services:
       POSTGRES_DB: storygen
     volumes:
       - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
     healthcheck:
       # The API and worker wait for this, otherwise their first query races
       # Postgres' own start-up and the container exits.
@@ -26,35 +51,40 @@ services:
       timeout: 3s
       retries: 10
 
-  api:
+  # Runs once per `up`: fetches and checksums the Kokoro voice model into the
+  # data volume (a no-op once it is there). If it can't, the app still starts
+  # and the voice picker says why Kokoro is unavailable; voices fall back to
+  # edge-tts.
+  models:
+    image: storygen:local
     build: .
+    command: ["sh", "-c", "python scripts/get_kokoro.py --quiet || echo 'Kokoro not available — voices will fall back to edge-tts'"]
     environment:
-      DATABASE_URL: postgresql+psycopg://storygen:storygen@db:5432/storygen
-      WORKER_INLINE: "0"        # the worker service does the work
-    env_file:
-      - path: .env
-        required: false
-    ports:
-      - "8000:8000"
+      DATA_DIR: /app/data
     volumes:
-      - ./data:/app/data
-    depends_on:
-      db:
-        condition: service_healthy
+      - ${DATA_PATH:-./data}:/app/data
+    restart: "no"
+
+  api:
+    <<: *app
+    environment:
+      <<: *app-env
+      WORKER_INLINE: "0"        # the worker service does the work
+    ports:
+      - "${HOST_PORT:-8000}:8000"
 
   worker:
-    build: .
+    <<: *app
     command: ["python", "main.py", "worker"]
-    environment:
-      DATABASE_URL: postgresql+psycopg://storygen:storygen@db:5432/storygen
-    env_file:
-      - path: .env
-        required: false
-    volumes:
-      - ./data:/app/data
-    depends_on:
-      db:
-        condition: service_healthy
+    # The image's check asks the web server, which a worker doesn't run. This
+    # one asks whether the worker has reached the queue in the last 2 minutes
+    # (the loop touches the file each poll, the job heartbeat every 15 s).
+    healthcheck:
+      test: ["CMD-SHELL", "test -n \"$(find /tmp/storygen-worker-alive -mmin -2 2>/dev/null)\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
 
 volumes:
   pgdata:

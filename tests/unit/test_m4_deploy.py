@@ -96,30 +96,24 @@ def test_an_unusable_storage_url_falls_back_to_disk(isolated_dirs, monkeypatch, 
 
 # ---- fonts --------------------------------------------------------------------
 
-def test_a_wide_script_gets_a_font_that_has_its_glyphs(monkeypatch):
-    """"Segoe UI" only exists on Windows, so the container needs another name."""
-    monkeypatch.setattr(fonts, "is_installed", lambda f: f == "Noto Sans")
-    fonts._first_installed.cache_clear()
-    assert fonts.font_for("Urdu") == "Noto Sans"
-    assert fonts.font_for("Japanese") == "Noto Sans"
-    fonts._first_installed.cache_clear()
-
-
-def test_latin_and_wide_scripts_can_resolve_differently(monkeypatch):
+def test_latin_text_keeps_a_latin_font(monkeypatch):
+    """Per-script choice (and the tests that render each script) are in
+    test_m9_subtitle_fonts.py: the two that stood here asserted that Urdu,
+    Japanese and Hindi get "Noto Sans", which has none of their glyphs."""
     installed = {"Arial", "Noto Sans"}
     monkeypatch.setattr(fonts, "is_installed", lambda f: f in installed)
-    fonts._first_installed.cache_clear()
+    fonts.clear_cache()
     assert fonts.font_for("English") == "Arial"
-    assert fonts.font_for("Hindi") == "Noto Sans"
-    fonts._first_installed.cache_clear()
+    fonts.clear_cache()
 
 
 def test_no_font_installed_still_names_one(monkeypatch):
     monkeypatch.setattr(fonts, "is_installed", lambda _f: False)
-    fonts._first_installed.cache_clear()
-    assert fonts.font_for("Urdu") == fonts.WIDE_SCRIPT_FONTS[0]
+    monkeypatch.setattr(fonts, "covering_families", lambda _lang: None)
+    fonts.clear_cache()
+    assert fonts.font_for("Urdu") == fonts.FONTS_BY_LANGUAGE["Urdu"][0]
     assert fonts.font_for("English") == fonts.LATIN_FONTS[0]
-    fonts._first_installed.cache_clear()
+    fonts.clear_cache()
 
 
 def test_the_subtitle_filter_uses_the_font_that_was_resolved(tmp_path, monkeypatch):

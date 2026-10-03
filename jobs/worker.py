@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import os
 import socket
+import tempfile
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 from agents.orchestrator import ProgressEvent
@@ -35,6 +37,18 @@ METHODS = {
 }
 
 HEARTBEAT_S = 15.0
+
+# A worker serves no HTTP, so its container health check reads this file
+# instead: the idle loop touches it every poll, the job heartbeat every 15 s.
+ALIVE_FILE = Path(os.getenv("WORKER_ALIVE_FILE")
+                  or Path(tempfile.gettempdir()) / "storygen-worker-alive")
+
+
+def mark_alive() -> None:
+    try:
+        ALIVE_FILE.touch()
+    except OSError:  # a health signal must never stop the work
+        pass
 
 
 class JobCancelled(BaseException):
@@ -64,6 +78,7 @@ class _Heartbeat:
 
     def _loop(self) -> None:
         while not self._stop.wait(self.interval):
+            mark_alive()
             try:
                 if not queue.heartbeat(self.job_id):
                     self.cancelled.set()
@@ -175,6 +190,9 @@ def run_forever(poll_interval: float = 1.0, kinds: Optional[Sequence[str]] = Non
             log.exception("could not claim a job")
             stop.wait(poll_interval)
             continue
+        # Only a worker that can reach the queue counts as alive: one that
+        # can't claim anything turns its container unhealthy, which is true.
+        mark_alive()
         if job is None:
             stop.wait(poll_interval)
             continue

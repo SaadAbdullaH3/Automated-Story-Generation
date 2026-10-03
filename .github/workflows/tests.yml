@@ -41,10 +41,10 @@ jobs:
         run: |
           sudo apt-get update
           # ffmpeg does all the audio/video work. The Noto fonts are what stop
-          # burned-in Urdu and CJK subtitles rendering as blank boxes, and
-          # libgl1 is what opencv needs to import at all on a headless runner.
+          # burned-in Urdu subtitles rendering as blank boxes (and what the
+          # subtitle-font tests render with).
           sudo apt-get install -y --no-install-recommends \
-            ffmpeg fontconfig fonts-dejavu-core fonts-noto-core libgl1
+            ffmpeg fontconfig fonts-dejavu-core fonts-noto-core
 
       - name: Install ffmpeg (Windows)
         if: runner.os == 'Windows'
@@ -54,9 +54,11 @@ jobs:
         run: ffmpeg -version
 
       - name: Install dependencies
+        # The S3 client and moto (a local fake of S3) let the off-machine
+        # backup tests run here too, offline.
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r requirements-s3.txt "moto>=5"
 
       - name: Every module imports
         # A syntax error in a file no test touches should still fail the build.
@@ -102,4 +104,65 @@ jobs:
           test -f out/index.html
           test -f out/studio/index.html
           echo "export OK: $(find out -name '*.html' | wc -l) pages"
+
+  image:
+    # The image is what the server runs, and the one place its fonts, ffmpeg
+    # build and Python wheels exist together — so it is built and checked on
+    # every change rather than discovered on deploy day.
+    name: image · build and run
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: storygen:local
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: What the server needs is in it
+        run: >
+          docker run --rm storygen:local python -c
+          "import kokoro_onnx, soundfile, onnxruntime, psycopg, boto3, argon2;
+          print('voices, Postgres and S3 drivers present')"
+
+      - name: Subtitles render in every script, first boot doesn't race, voices can't crash it
+        # Run inside the image: these are about its fonts, its database
+        # drivers and its voice libraries, not the runner's.
+        run: >
+          docker run --rm -e PIPELINE_SKIP_DOTENV=1 storygen:local
+          python -m pytest -q -p no:cacheprovider
+          tests/unit/test_m9_subtitle_fonts.py tests/unit/test_m9_schema_race.py
+          tests/unit/test_m9_system_voices.py
+
+      - name: The whole stack starts on a fresh database and answers
+        env:
+          DATA_PATH: ${{ runner.temp }}/storygen-data
+          HOST_PORT: "8000"
+        run: |
+          mkdir -p "$DATA_PATH" && chmod 777 "$DATA_PATH"
+          docker compose up -d --no-build
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8000/ready && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8000/api/auth/status | grep -q '"needs_setup":true'
+          docker compose ps
+          # A crash on first boot shows up as a restart, even if it recovered.
+          test "$(docker inspect -f '{{.RestartCount}}' "$(docker compose ps -q api)")" = 0
+          test "$(docker inspect -f '{{.RestartCount}}' "$(docker compose ps -q worker)")" = 0
+
+      - name: Logs, if anything above failed
+        if: failure()
+        run: docker compose logs --no-color | tail -200
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v
 

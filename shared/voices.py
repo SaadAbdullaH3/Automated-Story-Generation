@@ -7,7 +7,9 @@ offers for a preview.
 """
 from __future__ import annotations
 
+import ctypes.util
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -100,8 +102,26 @@ def default_engine() -> str:
     return spec.provider if spec else "edge"
 
 
+def system_voices_missing() -> Optional[str]:
+    """Why pyttsx3 can't speak on this machine, or None if it can.
+
+    On Linux it speaks through the system's espeak library. Without one it used
+    to hand back silence as a success — and once Kokoro had loaded its own
+    bundled espeak into the process, pyttsx3 started *that* copy with no data
+    path, and espeak answers a missing data file by calling exit(1): the API
+    died the moment someone previewed "System voices" after a Kokoro sample.
+    """
+    if sys.platform in ("win32", "darwin"):
+        return None                     # the OS ships a speech engine
+    if ctypes.util.find_library("espeak-ng") or ctypes.util.find_library("espeak"):
+        return None
+    return "no speech engine is installed on this machine (apt install espeak-ng)"
+
+
 def unavailable_reason(engine: Engine) -> Optional[str]:
     """Why this engine can't be used here, or None if it can."""
+    if engine.name == "pyttsx3":
+        return system_voices_missing()
     if engine.name == "kokoro":
         model, voices = os.getenv("KOKORO_MODEL", ""), os.getenv("KOKORO_VOICES", "")
         if not (model and voices):

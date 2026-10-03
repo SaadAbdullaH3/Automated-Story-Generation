@@ -547,6 +547,125 @@ flow; off unless `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are set):
   and `incorrect_client_credentials` with a wrong secret. The full round trip
   needs a person's GitHub login, so it is the owner's to click through.
 
+## M9 results (2026-10-03) — deployment
+
+Target: Oracle Cloud's Always Free ARM VM, now **2 OCPU / 12 GB** (cut from
+4/24 on 2026-06-15). Render speed was measured rather than guessed: a 20 s,
+3-scene render took 47.5 s on the laptop's 8 cores and 67.7 s pinned to two
+(`start /affinity 5`) — ffmpeg's zoompan is single-threaded, so cores matter
+little; slower ARM cores should put a short film at ~3-4 min.
+
+The production image had never been built. Building and running it found:
+- **Burned Urdu subtitles were empty boxes in the container.** `fonts.font_for`
+  picked "Noto Sans" for every non-Latin language, and on Linux Noto is split
+  per script — Noto Sans has no Arabic at all. The tests that existed checked
+  the font *name* against a list the wrong name was on (one even asserted
+  "Urdu gets Noto Sans"). Fonts are now chosen per language and, where
+  fontconfig exists, only if it covers the language — necessary but not
+  sufficient: fontconfig lists Noto Nastaliq Urdu, and libass draws it as
+  boxes too. `test_m9_subtitle_fonts.py` burns each language through the real
+  tool and counts hollow-rectangle glyphs (Urdu in Noto Sans: 19 of 20 shapes
+  were boxes; in Naskh, none), and runs inside the image in CI. Windows font
+  detection now reads the registry: file names don't follow family names
+  ("Nirmala UI" is Nirmala.ttc), so Hindi/CJK were silently skipped.
+- **The first boot on a fresh Postgres crashed.** API and worker both created
+  the schema at once; the loser died on a duplicate key in Postgres' catalog,
+  and only the restart policy hid it. Six processes started at a barrier: 5
+  of 6 crashed before, none after — Postgres takes an advisory lock, SQLite
+  retries (it raced too, ~1 start in 6, "already exists" / "database is
+  locked").
+- **Kokoro wasn't in the image** (its packages are optional), and `.env`'s
+  Windows model paths would have overridden any container path. The image now
+  installs voices and S3 support; compose pins container paths over `.env`,
+  and a one-shot `models` service fetches the model into the data volume.
+  `get_kokoro.py` used to keep any file over 1 MB — an interrupted download
+  included — so it now writes to `.part`, verifies SHA-256, then renames.
+- **The worker inherited the image's HTTP health check**, which a worker can
+  never pass. It now has its own: a file it touches whenever it reaches the
+  queue — one that can't reach the database turns unhealthy.
+- **265 MB of the image was never used**: OpenCV and moviepy (with a second
+  ffmpeg). Nothing imported either.
+- **On a Linux host the containers (uid 10001) couldn't write `data/`.** Docker
+  Desktop hides this; the setup script gives them the folder.
+
+Verified in Docker against a fresh Postgres with live providers: first boot
+with no restarts and both services healthy; a film planned (21 s), rendered
+with Kokoro and burned Urdu (112 s — the Urdu is real text), streamed with
+Range requests, and edited ("whispered voices · scene 2"). The whole suite,
+**367 tests, passes against a real Postgres 16** — the first time M8's claim
+query and `identities` table ran on one.
+
+Backups were proven by a round trip, not assumed: a stack with an account and
+a film, two backups (the second hard-links all 17 of its files to the first:
+two snapshots, 2.4 MB on disk), the database emptied and the films deleted,
+`restore.sh latest` — the account, the version and all 8 files back, owned by
+the containers' user, and the restored account signs in and sees its film.
+
+Server pieces (`deploy/`): Caddy for HTTPS (certificates automatic;
+`<ip>.sslip.io` works without owning a domain), a prod override where the API
+is reachable only through Caddy (so `FORWARDED_ALLOW_IPS=*` is safe and cookies
+are Secure), `setup-vm.sh` (Docker, Oracle's iptables, data ownership, `.env`
+with a generated DB password) tested in an Ubuntu container with Oracle-style
+REJECT rules, `backup.sh`/`restore.sh`, and `deploy/README.md`. CI gained an
+`image` job: build, check drivers, run the font and boot-race tests inside
+it, start the whole stack on a fresh database and fail on any restart.
+
+**The ARM image builds and runs** (the VM is aarch64; checked under QEMU on
+the laptop, `docker buildx build --platform linux/arm64`): every dependency
+has an aarch64 wheel (21.6 min emulated), the drivers import, all six
+subtitle scripts render, and Kokoro speaks with the real model — its 232 s
+for 1.6 s of audio is emulation, not a measurement.
+
+Image size 2.06 GB → 1.68 GB. Suites: **371 passed** on Windows, **367 on a
+real Postgres 16**, and the in-image checks pass on both architectures.
+
+**Backups leave the machine** (`scripts/offsite_backup.py`, wired into
+`backup.sh` when `.env` names a `BACKUP_BUCKET`): every dump plus a mirror of
+the newest films, changed files only — uploads stay single-part below 64 MB so
+R2's ETag is the MD5 and an unchanged file is never re-sent (a second push to
+real R2: 0 files). Proven as a disaster drill against the real bucket: a stack
+backed up, then its database volume, films *and local backups* deleted; a
+fresh empty stack and `restore.sh bucket` brought back the account, its
+version and all 8 files, and the account signed in and saw its film. `LATEST`
+is written last, so a push cut short still names the previous whole backup.
+
+**Live on the VM** (2026-10-03): Oracle Always Free A1 in Dubai, 2 OCPU /
+12 GB, Ubuntu 24.04 aarch64, at `https://139-185-59-132.sslip.io`. A VCN made
+with the console's plain "Create VCN" has no internet gateway or route, and
+then the instance form's public-IP switch won't turn on (the runbook now
+starts with the VCN wizard). `setup-vm.sh` worked first time; the native
+image build took 4 min 5 s (21.6 min under QEMU); Let's Encrypt issued for
+the sslip.io name in ~4 s; first boot on a fresh Postgres with 0 restarts.
+
+Measured rather than estimated: a first real film (44.7 s, 5 scenes, Kokoro,
+Urdu burned in, every image from Cloudflare) planned in 18 s and rendered in
+398 s, 297 s of it shots. The offline benchmark took 188 s against the
+laptop's 47.5 s — an A1 core is ~2.8× slower than a laptop core at this, not
+the ~2× guessed — and CPU sampling showed why shots dominate: rendered one at
+a time, they held ~130% of 200%, since zoompan is single-threaded. **Shots now
+render side by side** across all changed scenes (one per core, at most 4,
+`SHOT_WORKERS`): the same benchmark 136 s, shot step 168 s → 116 s, CPU ~196%,
+peak memory 471 MB. A second real film after the change (43.3 s, 5 scenes,
+18 shots — one more than the first) rendered in **292 s against 398 s**:
+shots took 10.8 s each instead of 17.5 s; voices (46 s) and images (25 s)
+were unchanged. Of its 19 images 13 came from Cloudflare, 5 reused the
+storyboard and 1 went to Pollinations after a Cloudflare NSFW false positive.
+
+Using it found two bugs:
+- **The API died once, exit code 1 and no traceback**, as Saad previewed
+  voices. "System voices" (pyttsx3) after a Kokoro sample: Kokoro loads a
+  bundled espeak into the process, pyttsx3 then started that copy without a
+  data path, and espeak answers a missing data file by calling `exit(1)`. A
+  render falling back to pyttsx3 in a worker that had used Kokoro would have
+  killed the worker the same way. In the image pyttsx3 also had no espeak of
+  its own and returned silence as success. Now: pyttsx3 refuses on Linux
+  without a system espeak (and the voice picker says why), and loading Kokoro
+  sets `ESPEAK_DATA_PATH`. `test_m9_system_voices.py` reproduces it in a
+  subprocess with a stand-in Kokoro that starts espeak the same way; run in
+  the image, each half of the fix is shown to be needed, and CI runs it there.
+- The translation log named the first provider in the chain ("via
+  llm:gemini") when Gemini had 503'd and Groq translated.
+
 ## Known issues / next milestones
 
 - The Pollinations key now has a small pollen budget, so the keyed endpoint
@@ -580,9 +699,22 @@ flow; off unless `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are set):
   UI, though the API and the data model both support it.
 - GitHub can be connected but not disconnected from the UI yet (an account
   made through GitHub has no password, so disconnecting needs a set-password
-  step first). GitHub's callback must match the registered URL exactly:
-  open the app at `http://localhost:8000`, not `127.0.0.1`, or pin
-  `GITHUB_CALLBACK_URL`.
+  step first). GitHub's callback must match a registered redirect URI
+  exactly: open the app at `http://localhost:8000`, not `127.0.0.1`, or pin
+  `GITHUB_CALLBACK_URL`. One OAuth app takes up to ten redirect URIs, so the
+  laptop and the server share it.
+- Off-machine backups mirror only the newest films; older database dumps are
+  kept, but restoring an old one pairs it with today's films. R2's free 10 GB
+  will eventually be outgrown by films + versions (snapshot storage growth,
+  below).
+- Docker Desktop on Windows reaches bind-mounted `data/` through a slow
+  file-sharing layer, so container timings on the laptop (a scene-2 voice
+  edit took 100 s) say little about a Linux host's own disk. The VM's
+  numbers are in M9.
+- Renders on the free VM are CPU-bound (~2.8× slower per core than the
+  laptop). The remaining lever is `SUPERSAMPLE` 3 → 2, which trades some pan
+  smoothness for speed; not taken.
+- Kokoro's first line in a fresh worker loads its model (~30 s on the VM).
 - An edit that rewrites the script starts its voices fresh (scene 2 is a
   different scene afterwards); only the voice engine carries over.
 - Versions saved by a revert before M8 carry the wrong `version` inside their

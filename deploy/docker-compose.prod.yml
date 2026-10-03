@@ -1,0 +1,46 @@
+# On the server: the same services as docker-compose.yml, behind HTTPS.
+#
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
+#
+# Needs DOMAIN and POSTGRES_PASSWORD in .env (compose reads it for these
+# substitutions as well as passing it to the app). See deploy/README.md.
+
+services:
+  db:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+
+  api:
+    # Reachable only through Caddy: nothing on the host's network can talk to
+    # the app directly, which is what makes trusting forwarded headers safe.
+    ports: !reset []
+    expose: ["8000"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://storygen:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/storygen
+      # Caddy terminates TLS; this lets the app see https, so the session
+      # cookie is Secure and GitHub's callback is built as https://DOMAIN/...
+      FORWARDED_ALLOW_IPS: "*"
+
+  worker:
+    environment:
+      DATABASE_URL: postgresql+psycopg://storygen:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/storygen
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"       # Let's Encrypt's challenge, then a redirect to https
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data         # certificates: kept, or every restart re-issues
+      - caddy_config:/config
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
