@@ -1,8 +1,8 @@
 {
-  "name": "agentic-video-web",
+  "name": "dastango-web",
   "private": true,
   "version": "0.1.0",
-  "description": "The creator interface: write a sentence, approve a storyboard, watch the film.",
+  "description": "Dastango's creator interface: write a sentence, approve a storyboard, watch the film.",
   "scripts": {
     "dev": "next dev --port 3000",
     "build": "next build",

@@ -4,9 +4,25 @@ import { monoFont, titleFont, uiFont } from "@/lib/fonts";
 
 import "./globals.css";
 
+const DESCRIPTION =
+  "One sentence in. A finished short film out — script, voices, pictures, music and cuts. Then change it by saying what you want.";
+
+// Link previews (chat apps, email) need absolute URLs. The deployment's own
+// address is baked in at build time; SITE_URL overrides it.
+const SITE_URL = process.env.SITE_URL || "https://139-185-59-132.sslip.io";
+
 export const metadata: Metadata = {
-  title: "Agentic Video Generator",
-  description: "One sentence in. A finished short film out — script, voices, pictures, music and cuts.",
+  metadataBase: new URL(SITE_URL),
+  title: { default: "Dastango — a short film from one sentence", template: "%s · Dastango" },
+  description: DESCRIPTION,
+  applicationName: "Dastango",
+  openGraph: {
+    type: "website",
+    siteName: "Dastango",
+    title: "Dastango — a short film from one sentence",
+    description: DESCRIPTION,
+  },
+  twitter: { card: "summary_large_image" },
 };
 
 export const viewport: Viewport = {

@@ -9,7 +9,8 @@ Mounts:
   /api/voices     — voice engines, and a sample to listen to
   /ws/progress    — live progress events for a project's current job
   /assets/...     — static asset server for generated images/videos
-  /              — single-page HTML UI
+  /api/docs       — the interactive API reference (OpenAPI at /api/openapi.json)
+  /              — the web app, including its /docs pages
 
 By default the API also runs a worker thread, so `python main.py serve` is still
 the only command needed on a laptop. Set WORKER_INLINE=0 and run
@@ -71,10 +72,16 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="Agentic Animated Video Generation",
+    title="Dastango",
     version="1.0.0",
-    description="End-to-end agentic pipeline: prompt → animated short film with intelligent edits.",
+    description="A short film from one sentence — script, voices, pictures, music and cuts — "
+                "then change it by saying what you want.",
     lifespan=lifespan,
+    # The interactive API reference lives under /api, so /docs belongs to the
+    # product's own documentation pages.
+    docs_url="/api/docs",
+    redoc_url=None,
+    openapi_url="/api/openapi.json",
 )
 
 # The UI is served from this same origin, so by default no cross-origin
@@ -150,7 +157,7 @@ def _classic_page():
     idx = FRONTEND_DIR / "src" / "index.html"
     if idx.exists():
         return FileResponse(idx)
-    return HTMLResponse("<h1>Agentic Video Generator</h1><p>Frontend not built.</p>")
+    return HTMLResponse("<h1>Dastango</h1><p>The interface has not been built.</p>")
 
 
 @app.get("/classic/", response_class=HTMLResponse)

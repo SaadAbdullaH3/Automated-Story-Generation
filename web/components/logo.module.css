@@ -1,0 +1,16 @@
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.mark {
+  flex: none;
+  color: var(--fg);
+}
+.word {
+  font-size: 21px;
+  letter-spacing: -0.015em;
+  line-height: 1;
+  /* Sits on the arch's floor line rather than centred on the mark. */
+  transform: translateY(1px);
+}

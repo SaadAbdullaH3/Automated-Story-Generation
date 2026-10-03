@@ -3,6 +3,7 @@
 import Link from "next/link";
 
 import { useSession } from "./AuthGate";
+import { Logo } from "./Logo";
 import styles from "./topbar.module.css";
 
 export function TopBar() {
@@ -10,10 +11,13 @@ export function TopBar() {
   return (
     <>
       <header className={styles.bar}>
-        <Link href="/" className={`title ${styles.mark}`}>
-          Agentic Video Generator
+        <Link href="/" className={styles.mark} aria-label="Dastango — your films">
+          <Logo />
         </Link>
         <span className={styles.spacer} />
+        <Link href="/docs/" className={`btn quiet small ${styles.link}`}>
+          Docs
+        </Link>
         <span className="meta">{user.email}</span>
         {github.enabled && !github.connected && (
           // Linking needs a signed-in account, so it lives here, not on the sign-in page.

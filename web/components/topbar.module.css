@@ -6,9 +6,8 @@
   margin-bottom: clamp(32px, 6vw, 64px);
 }
 .mark {
-  font-size: 20px;
   text-decoration: none;
-  letter-spacing: -0.01em;
+  color: var(--fg);
 }
 .spacer {
   flex: 1;
@@ -33,8 +32,5 @@
 @media (max-width: 560px) {
   .bar :global(.meta) {
     display: none;
-  }
-  .mark {
-    font-size: 18px;
   }
 }

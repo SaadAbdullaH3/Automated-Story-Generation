@@ -1,7 +1,7 @@
 {
   "name": "agentic-video-frontend",
   "version": "1.0.0",
-  "description": "Vanilla SPA frontend for the agentic video generation pipeline. Served directly by FastAPI — no build step required.",
+  "description": "Dastango's original single-page UI (served at /classic/). Served directly by FastAPI — no build step required.",
   "main": "src/index.html",
   "scripts": {
     "serve": "python -m http.server 5173 --directory src"

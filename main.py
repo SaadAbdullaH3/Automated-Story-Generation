@@ -193,7 +193,7 @@ def cmd_providers(_args: argparse.Namespace) -> int:
     print()
     print(f"  video tier   -> {tier}")
     if not (fal or rep or hf):
-        print("     text-to-video / lip sync: none configured (see docs/REAL_VIDEO_SETUP.md)")
+        print("     text-to-video / lip sync: none configured (see docs/PROVIDERS.md)")
 
     print()
     print("-" * 74)

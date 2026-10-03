@@ -1,9 +1,8 @@
 """Edit planner — turn an EditIntent into a sequence of executor steps.
 
 We keep this very small: an intent maps to one (sometimes two) executor calls.
-A LangGraph implementation would expose this as a graph node; the spec asks
-for stateful multi-turn editing so we keep `plan` pure and let the agent loop
-own the state.
+`plan` is pure — the edit agent owns the state and its versions, so editing
+can go on turn after turn without the planner remembering anything.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field

@@ -6,6 +6,7 @@ import { api, ApiError } from "@/lib/api";
 import type { AuthStatus, User } from "@/lib/types";
 
 import styles from "./auth.module.css";
+import { Logo } from "./Logo";
 
 /** Something the GitHub round trip came back with, shown once. */
 export type Notice = { text: string; kind: "ok" | "error" };
@@ -143,7 +144,7 @@ function SignIn({
   return (
     <main className={styles.gate}>
       <form className={`${styles.card} rise`} onSubmit={submit}>
-        <p className="label">Agentic Video Generator</p>
+        <Logo size={34} />
         <h1 className={`title ${styles.heading}`}>
           {setup ? "Make the first account" : registering ? "Make an account" : "Welcome back"}
         </h1>
@@ -214,6 +215,9 @@ function SignIn({
             {registering ? "I already have an account" : "Make an account instead"}
           </button>
         )}
+        <p className={styles.docs}>
+          New here? <a href="/docs/">Read how it works</a>
+        </p>
       </form>
     </main>
   );

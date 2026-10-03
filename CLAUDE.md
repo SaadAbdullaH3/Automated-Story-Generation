@@ -1,21 +1,27 @@
 # CLAUDE.md
 
-Guidance for Claude Code (and humans) working in this repository.
+Guidance for Claude Code (and humans) working in this repository, and the
+engineering log of every milestone. For an overview, start with
+[README.md](README.md) and [docs/](docs/).
 
 ## What this is
 
-An agentic pipeline that turns one natural-language prompt into a short animated
-film, with natural-language editing and versioned undo. Originally a FAST-NUCES
-Agentic AI semester project; now being developed into a production-grade product.
+**Dastango** — an agentic pipeline that turns one natural-language prompt into
+a short animated film, with natural-language editing and versioned undo —
+deployed at https://139-185-59-132.sslip.io. Internal names (database, user,
+containers, paths) still say `storygen`; only what people see says Dastango.
+The user guide is the web app's `/docs` pages; the interactive API reference
+moved to `/api/docs`.
 
-Pipeline: **Phase 1 Story** → **Phase 2 Audio** → **Phase 3 Video**, plus
-**Phase 4 Web UI** (FastAPI + vanilla JS) and **Phase 5 Edit & Undo**.
+Pipeline: **Phase 1 Story** → **Phase 2 Audio** → **Phase 3 Video**, the
+**creator interface** (Next.js static export served by FastAPI), and
+**Edit & Undo**.
 
 ## Working agreement
 
 - Work is split into milestones (M0 baseline → M1 correctness → M2 model settings layer
-  and free-tier upgrades → M3 quality → M4 production architecture → M5 premium video
-  → M6 ship polish).
+  → M3 quality → M4 production architecture → M5 accounts → M6 premium video → M7 ship
+  polish → M8 creator interface → M9 deployment); see [CHANGELOG.md](CHANGELOG.md).
 - **At the end of every milestone: commit, push, open a draft PR, report back, and
   wait for the owner's go-ahead before starting the next milestone.**
 - Current constraint: **$0 spend.** Use the best free API tiers and open-source
@@ -398,9 +404,8 @@ Three robustness fixes found while verifying:
   it, so there was no way back to yesterday's film. Clicking one loads the
   video, its subtitle tracks and its history, or opens the storyboard if it
   was never rendered.
-- **A front page that describes the product**, not the course brief. The old
-  one opened with a Member 1-4 ownership table; the original team project is
-  now credited in an Origins section instead of being the headline.
+- **A front page that describes the product**, rather than how the original
+  prototype's modules were divided.
 
 Worth knowing operationally: `data/state.db` runs in WAL mode, so copying that
 file alone does **not** copy recent writes — a backup taken with `cp` came back
