@@ -15,7 +15,7 @@ and a measured result; the detailed engineering log for every milestone is in
   previous/next links. Every edit phrasing it shows was run through the
   classifier first. FastAPI's interactive reference moved to `/api/docs`.
 - The repository's documentation for engineers (architecture, agents,
-  frameworks, decisions, API, testing, security).
+  frameworks, decisions, API, testing, security), and an MIT licence.
 
 ## M9 — Deployed (2026-10-03)
 
