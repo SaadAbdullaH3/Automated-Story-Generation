@@ -41,3 +41,6 @@ data/benchmarks/
 
 # Downloaded model files (scripts/get_kokoro.py) — hundreds of MB
 data/models/
+
+# Local tool settings (Claude Code)
+.claude/settings.local.json

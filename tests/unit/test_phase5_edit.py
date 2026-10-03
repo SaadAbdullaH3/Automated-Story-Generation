@@ -13,8 +13,8 @@ from agents.edit_agent.intent_classifier import IntentClassifier, classify
 from agents.edit_agent.planner import plan
 from shared.schemas.edit import EditIntent
 
-# These test data points correspond to the spec's "What the User Can Say" table
-# plus a few extras to push past the 10-query minimum.
+# Phrasings a creator actually uses, one or more per kind of edit, classified
+# by the offline keyword path.
 EDIT_QUERIES = [
     ("Change voice tone to whispered",        "audio",       "change_voice_tone"),
     ("change voice for the narrator",         "audio",       "change_voice"),

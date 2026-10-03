@@ -1,11 +1,12 @@
 """Phase 1 agent: prompt -> validated ScriptOutput.
 
-Architecture follows the LangGraph-style pipeline shown in the spec diagram:
-    [Story agent] -> [Character agent] -> [Script agent]
-with retries and an error handler. We implement it as a small in-process graph
-rather than pulling in LangGraph as a hard dependency, so the project runs
-without extra installs. The state shape and retry behavior match what a
-LangGraph implementation would look like.
+One structured call writes the story, the cast and the scenes together,
+against the ScriptOutput schema, with a word budget derived from the target
+length. The `story` provider chain supplies the model: malformed JSON is
+retried with the validation error, a provider that is down hands over to the
+next, and with none left (or no keys at all) a deterministic template writes
+the script. Then every speaker is checked against the cast and each
+character's look is pinned before any image is drawn.
 """
 from __future__ import annotations
 from datetime import datetime
@@ -176,7 +177,7 @@ class StoryAgent:
             log.warning("structured LLM gen failed (%s) — using template fallback", e)
             return template_script(project_id, prompt, target_duration_s=duration_s, scene_count=scene_count)
 
-    # ---- validation (check_consistency / estimate_duration tools) -------
+    # ---- validation --------------------------------------------------------
 
     def _validate(self, script: ScriptOutput) -> None:
         char_ids = {c.id for c in script.characters.characters}
@@ -190,7 +191,7 @@ class StoryAgent:
         if not script.scenes:
             raise ValueError("scenes must not be empty")
 
-    # ---- serialization (matches diagram artifacts) -----------------------
+    # ---- serialization: the artifacts each phase hands to the next --------
 
     def _serialize(self, project_id: str, script: ScriptOutput) -> list[str]:
         proj = project_dir(project_id)

@@ -26,4 +26,4 @@ data/
 docs/BENCHMARK*.json
 
 *.md
-!Readme.md
+!README.md
