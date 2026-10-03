@@ -20,6 +20,13 @@ CONFIG = textwrap.dedent("""
           model: openai/gpt-oss-120b
           requires: [TEST_GROQ_KEY|TEST_GROQ_ALT]
         - provider: mock
+      translate:
+        - provider: gemini
+          model: gemini-flash-latest
+          requires: [TEST_GEMINI_KEY]
+        - provider: groq
+          model: openai/gpt-oss-120b
+          requires: [TEST_GROQ_KEY|TEST_GROQ_ALT]
       image:
         - provider: cloudflare
           model: "@cf/flux"
@@ -142,6 +149,27 @@ def test_llm_returns_mock_when_every_provider_fails(config, monkeypatch):
     client = _client(monkeypatch, calls, failures={"gemini", "groq"})
     resp = client.generate("hi")
     assert resp.provider == "mock" and resp.text.startswith("[mock-llm]")
+
+
+def test_translation_names_the_provider_that_answered(config, monkeypatch):
+    """On the server Gemini 503'd and Groq translated, yet the log said
+    "via llm:gemini" — the label was the chain's first entry, not who answered."""
+    from mcp.tools.llm_tools import llm_client
+    from mcp.tools.llm_tools.translate_tool import TranslateTool
+    monkeypatch.setenv("TEST_GEMINI_KEY", "x")
+    monkeypatch.setenv("TEST_GROQ_KEY", "x")
+    providers.load(force=True)
+
+    def fake_call(self, spec, prompt, system, temperature, max_tokens, schema=None):
+        if spec.provider == "gemini":
+            raise RuntimeError("503 UNAVAILABLE")
+        return '["bonjour"]'
+
+    monkeypatch.setattr(llm_client.LLMClient, "_call", fake_call)
+    llm_client.reset_clients()
+    res = TranslateTool().run(lines=["hello"], target_language="French")
+    assert res.success and res.data == ["bonjour"]
+    assert res.metadata["provider"] == "llm:groq"
 
 
 def test_structured_output_is_validated(config, monkeypatch):

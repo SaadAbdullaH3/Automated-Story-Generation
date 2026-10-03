@@ -46,9 +46,10 @@ class TranslateTool(BaseTool):
         client = get_llm_client("translate")
         if client.provider != "mock":
             try:
-                out = self._llm(client, lines, lang)
+                out, served_by = self._llm(client, lines, lang)
+                # Who answered, not who was asked first: the chain falls through.
                 return ToolResult(success=True, data=out,
-                                  metadata={"provider": f"llm:{client.provider}"})
+                                  metadata={"provider": f"llm:{served_by}"})
             except Exception as e:  # noqa: BLE001
                 errors.append(f"llm: {e}")
                 log.info("LLM translation to %s failed (%s) — trying MyMemory", lang, e)
@@ -64,7 +65,7 @@ class TranslateTool(BaseTool):
     # ---- providers -------------------------------------------------------
 
     @staticmethod
-    def _llm(client, lines: List[str], lang: str) -> List[str]:
+    def _llm(client, lines: List[str], lang: str) -> tuple[List[str], str]:
         prompt = (
             f"Translate each subtitle line below into {lang}. Keep the tone and keep "
             f"lines short enough to read on screen.\n"
@@ -72,8 +73,9 @@ class TranslateTool(BaseTool):
             f"one translation per input line.\n\n"
             + json.dumps(lines, ensure_ascii=False)
         )
-        text = client.generate(prompt, system="You are a professional subtitle translator.",
-                               temperature=0.2, max_tokens=4000).text
+        response = client.generate(prompt, system="You are a professional subtitle translator.",
+                                   temperature=0.2, max_tokens=4000)
+        text = response.text
         match = re.search(r"\[.*\]", text, flags=re.DOTALL)
         if not match:
             raise ValueError("no JSON array in response")
@@ -81,7 +83,7 @@ class TranslateTool(BaseTool):
         if not isinstance(out, list) or len(out) != len(lines) \
                 or not all(isinstance(s, str) and s.strip() for s in out):
             raise ValueError(f"expected {len(lines)} non-empty strings, got {len(out) if isinstance(out, list) else type(out).__name__}")
-        return [s.strip() for s in out]
+        return [s.strip() for s in out], response.provider
 
     def _mymemory(self, lines: List[str], lang: str) -> List[str]:
         from deep_translator import MyMemoryTranslator
