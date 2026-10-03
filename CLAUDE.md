@@ -547,7 +547,7 @@ flow; off unless `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are set):
   and `incorrect_client_credentials` with a wrong secret. The full round trip
   needs a person's GitHub login, so it is the owner's to click through.
 
-## M9 results (2026-10-03, in progress) — deployment
+## M9 results (2026-10-03) — deployment
 
 Target: Oracle Cloud's Always Free ARM VM, now **2 OCPU / 12 GB** (cut from
 4/24 on 2026-06-15). Render speed was measured rather than guessed: a 20 s,
@@ -645,7 +645,11 @@ the ~2× guessed — and CPU sampling showed why shots dominate: rendered one at
 a time, they held ~130% of 200%, since zoompan is single-threaded. **Shots now
 render side by side** across all changed scenes (one per core, at most 4,
 `SHOT_WORKERS`): the same benchmark 136 s, shot step 168 s → 116 s, CPU ~196%,
-peak memory 471 MB.
+peak memory 471 MB. A second real film after the change (43.3 s, 5 scenes,
+18 shots — one more than the first) rendered in **292 s against 398 s**:
+shots took 10.8 s each instead of 17.5 s; voices (46 s) and images (25 s)
+were unchanged. Of its 19 images 13 came from Cloudflare, 5 reused the
+storyboard and 1 went to Pollinations after a Cloudflare NSFW false positive.
 
 Using it found two bugs:
 - **The API died once, exit code 1 and no traceback**, as Saad previewed

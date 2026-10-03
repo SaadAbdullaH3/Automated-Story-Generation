@@ -6,10 +6,10 @@ Free ARM VM: **2 OCPUs and 12 GB of RAM** (cut from 4/24 in June 2026), free
 for good, with no card charge as long as you stay on Always Free resources.
 
 How fast it is, measured on that VM: a storyboard takes about 20 s (it is
-mostly waiting on the model and image APIs). Rendering is CPU work, and an A1
-core is ~2.8× slower than a laptop's at it: the offline benchmark — a 25 s,
-3-scene film — renders in **136 s**, drawing two shots at once to use both
-cores (188 s one at a time).
+mostly waiting on the model and image APIs). A 43 s, 5-scene film with Kokoro
+voices and live images renders in **4 min 52 s**. Rendering is CPU work and
+an A1 core is ~2.8× slower than a laptop's at it, so it draws two shots at
+once to use both cores (one at a time, a film like that took 6 min 38 s).
 
 ## 1. The VM (Oracle console)
 
