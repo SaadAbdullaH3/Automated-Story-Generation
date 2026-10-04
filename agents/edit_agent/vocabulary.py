@@ -55,7 +55,7 @@ EDITS: Dict[str, Edit] = {
 }
 
 UNCLEAR = "unclear"
-UNCLEAR_MESSAGE = ("not sure what to change — name a scene, a voice, the music, "
+UNCLEAR_MESSAGE = ("not sure what to change: name a scene, a voice, the music, "
                    "the look or the pace, e.g. “make scene 2 darker”")
 
 # How to ask for a missing parameter, naming the choices.

@@ -140,7 +140,7 @@ def run_one(prompt: str, args) -> Dict[str, Any]:
 def to_markdown(report: Dict[str, Any]) -> str:
     rows = report["runs"]
     lines = [
-        f"# Benchmark — {report['started_at']}",
+        f"# Benchmark: {report['started_at']}",
         "",
         f"`{report['command']}`",
         "",
@@ -161,7 +161,7 @@ def to_markdown(report: Dict[str, Any]) -> str:
     totals = report["totals"]
     lines += [
         "",
-        f"**Totals** — {totals['runs']} runs, {totals['total_s']}s, "
+        f"**Totals:** {totals['runs']} runs, {totals['total_s']}s, "
         f"all in sync: {'yes' if totals['all_in_sync'] else 'NO'}, "
         f"every line on a cut: {'yes' if totals['all_lines_on_cuts'] else 'NO'}, "
         f"mean length error {totals['mean_duration_error_pct']}%, "

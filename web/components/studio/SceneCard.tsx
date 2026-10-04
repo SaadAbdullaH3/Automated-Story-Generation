@@ -102,7 +102,7 @@ export function SceneCard({ card, number, active, editable, delay = 0, onSave }:
           ))}
           <p className={styles.editNote}>
             {visualChanged
-              ? "Changing what the camera sees redraws this frame — one image."
+              ? "Changing what the camera sees redraws this frame: one image."
               : "Text changes are free; nothing is redrawn."}
           </p>
           <div className={styles.editActions}>

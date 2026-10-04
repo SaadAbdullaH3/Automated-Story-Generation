@@ -1,6 +1,6 @@
 # Agentic architecture
 
-Four agents, one orchestrator, a tool layer, and provider chains — designed so
+Four agents, one orchestrator, a tool layer, and provider chains, designed so
 that every model call is **structured, validated, replaceable and allowed to
 fail**. The system around them (processes, queue, database, deployment) is in
 [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -28,7 +28,7 @@ flowchart TB
     prompt(["One sentence"]) --> orch
     query(["A change in plain English"]) --> orch
 
-    subgraph orch["Orchestrator — agents/orchestrator · plain-Python graph"]
+    subgraph orch["Orchestrator · agents/orchestrator · plain-Python graph"]
         direction LR
         planN["plan"] ~~~ renderN["render"] ~~~ fullN["run_full"] ~~~ editN["edit"] ~~~ revertN["revert"]
     end
@@ -41,7 +41,7 @@ flowchart TB
         edit["Edit agent<br/>closed-form intent → plan → execute<br/>Pydantic Literal schema"]
     end
 
-    subgraph toolsL["Tool layer — mcp/ · 23 registered tools"]
+    subgraph toolsL["Tool layer · mcp/ · 23 registered tools"]
         direction LR
         tLLM["llm.* · text.translate"]
         tAud["audio.tts · audio.bgm · audio.merge"]
@@ -49,7 +49,7 @@ flowchart TB
         tVid["video.compose · ffmpeg<br/>subtitle · multi_subtitle"]
     end
 
-    subgraph chains["Provider chains — config/providers.yaml"]
+    subgraph chains["Provider chains · config/providers.yaml"]
         direction LR
         cLLM["story · edit_intent · translate<br/>Gemini → Groq → OpenRouter → Ollama → offline"]
         cImg["image<br/>Cloudflare FLUX → local SD → Pollinations → placeholder"]
@@ -57,8 +57,8 @@ flowchart TB
         cMot["video · lipsync<br/>fal → HF → Veo (opt-in) → Replicate → ffmpeg"]
     end
 
-    memory[("Memory — state_manager<br/>append-only versions + file snapshots")]
-    timeline["Timeline — shared/timeline.py<br/>one source of timing"]
+    memory[("Memory · state_manager<br/>append-only versions + file snapshots")]
+    timeline["Timeline · shared/timeline.py<br/>one source of timing"]
 
     orch --> story & audio & video & edit
     story --> tLLM
@@ -88,7 +88,7 @@ flowchart TB
 | Principle | What it means in the code |
 |---|---|
 | **Agents never name a model** | An agent asks for a *role* (`story`, `image`, `tts` …) and gets that role's chain from `config/providers.yaml`. Swapping Gemini for Claude, or adding a paid image model, is a YAML edit. |
-| **Every model answer is a schema** | The script is a `ScriptOutput`, an edit is an `EditDraft` — Pydantic models sent to the provider as a native JSON schema where it supports one, validated on the way back. Malformed JSON is retried once with the validation error fed back to the model. |
+| **Every model answer is a schema** | The script is a `ScriptOutput`, an edit is an `EditDraft`: Pydantic models sent to the provider as a native JSON schema where it supports one, validated on the way back. Malformed JSON is retried once with the validation error fed back to the model. |
 | **Closed vocabularies where actions follow** | The edit model chooses from enumerated intents and values the executor can actually perform. An invented intent fails validation instead of becoming a silent no-op. |
 | **Fail loudly, fall back visibly** | A provider that fails returns `success=False` or raises; the chain moves on and logs which provider served each result. Nothing ships degraded under a success label. |
 | **Always an offline path** | A deterministic template script, a keyword edit classifier, placeholder images, silent audio of the right length. The whole test suite runs this way, with no keys. |
@@ -110,7 +110,7 @@ both without stopping (the CLI's default).
 
 ```mermaid
 flowchart LR
-    subgraph planG["plan — about 20 s"]
+    subgraph planG["plan (about 20 s)"]
         direction TB
         p1["Story agent<br/>script · cast · scenes"] --> p2["Video agent<br/>one preview per scene,<br/>at render size"]
         p2 --> p3[("version: storyboard")]
@@ -118,13 +118,13 @@ flowchart LR
 
     review{{"Creator reads and<br/>edits the scenes"}}
 
-    subgraph renderG["render — minutes"]
+    subgraph renderG["render (minutes)"]
         direction TB
         r1["Audio agent<br/>voices · timeline · music"] --> r2["Video agent<br/>portraits · shots ·<br/>scenes · subtitles"]
         r2 --> r3[("version: rendered")]
     end
 
-    subgraph changeG["edit or revert — as often as wanted"]
+    subgraph changeG["edit or revert (as often as wanted)"]
         direction TB
         e1["Edit agent<br/>understand · plan · execute"] --> e3[("new version")]
         v1["Revert<br/>restore version n"] --> e3
@@ -136,7 +136,7 @@ flowchart LR
 The graph is a small node executor (`agents/orchestrator/graph.py`): each node
 is an agent step; `on_node` and `on_node_done` callbacks turn into progress
 events; an exception stops the graph and becomes an `error` event. Between
-nodes is also where a cancelled job stops — never inside an ffmpeg call.
+nodes is also where a cancelled job stops, never inside an ffmpeg call.
 
 ---
 
@@ -147,14 +147,14 @@ the providers whose credentials are present, in order. Tools walk that list.
 
 ```mermaid
 flowchart LR
-    subgraph storyR["story role — writing the script"]
+    subgraph storyR["story role: writing the script"]
         direction LR
         g["Gemini Flash"] -- "503 · quota ·<br/>invalid twice" --> q["Groq<br/>gpt-oss-120b"]
         q -- "fails" --> o["OpenRouter"]
         o -- "fails" --> tpl(["Template script<br/>offline"])
     end
 
-    subgraph imageR["image role — every picture"]
+    subgraph imageR["image role: every picture"]
         direction LR
         c["Cloudflare FLUX<br/>4 at once · 3 attempts"] -- "quota · refusal ·<br/>3 failures" --> pol["Pollinations<br/>1 at once · 3 attempts"]
         pol -- "fails" --> ph(["Placeholder<br/>offline"])
@@ -170,7 +170,7 @@ How a provider hands over:
 
 - **Permanent errors** (400, 401, 403) move to the next provider at once.
 - **Rate limits, 5xx and timeouts** retry with back-off where the provider has
-  `retries:` — the free image endpoints get three attempts. A language model
+  `retries:`. The free image endpoints get three attempts. A language model
   that is down is skipped immediately; the next one is faster than waiting.
 - **A malformed structured answer** is retried once with the validation error
   added to the prompt.
@@ -188,7 +188,7 @@ How a provider hands over:
 | `tts` | Kokoro (local, onnxruntime) → ElevenLabs → Edge TTS → gTTS → pyttsx3 | silence of the right length |
 | `video` | fal → Hugging Face → Veo 3.1 (needs `VIDEO_BUDGET_OK`) → Replicate | ffmpeg camera moves |
 | `lipsync` | fal → Replicate | a heuristic mouth animation on the portrait |
-| `music` | ffmpeg synthesis | — |
+| `music` | ffmpeg synthesis | none |
 
 Details that came from running it, not from theory:
 
@@ -197,7 +197,7 @@ Details that came from running it, not from theory:
 - **Free endpoints rate-limit per IP.** Measured: keyless Pollinations answers
   one request at a time and returns 429 to the rest. The pool was once sized
   from the first provider's limit, so a fall-back from Cloudflare sent four
-  requests at once and the run came back full of placeholders — hence a
+  requests at once and the run came back full of placeholders, hence a
   semaphore per provider.
 - **A paid provider never becomes the default by being better.** Free
   providers come first; Veo needs a second, deliberate opt-in on top of a key.
@@ -206,7 +206,7 @@ Details that came from running it, not from theory:
 
 ## 5. Story agent
 
-`agents/story_agent/` — one sentence in, a validated `ScriptOutput` out: the
+`agents/story_agent/`. One sentence in, a validated `ScriptOutput` out: the
 story (title, logline, genre, visual style), the cast (with voice traits and a
 visual description), and scenes (setting, tone, visual prompt, lines).
 
@@ -235,7 +235,7 @@ flowchart LR
 
 ## 6. Audio agent
 
-`agents/audio_agent/` — the script in, an `AudioOutput` and the film's
+`agents/audio_agent/`. The script in, an `AudioOutput` and the film's
 **timeline** out. Its three steps are public because edits reuse them.
 
 ```mermaid
@@ -259,12 +259,12 @@ flowchart LR
 
 ## 7. Video agent
 
-`agents/video_agent/` — assets first, then composition. `compose` is also
+`agents/video_agent/`. Assets first, then composition. `compose` is also
 what every edit calls.
 
 ```mermaid
 flowchart LR
-    subgraph assets["run — assets"]
+    subgraph assets["run: assets"]
         direction TB
         port["Portrait per character"] ~~~ bank["Shot bank per scene<br/>wide · detail · alt"] ~~~ reuse["Storyboard preview<br/>= the wide shot"]
     end
@@ -340,7 +340,7 @@ error cannot accumulate: before this existed, the voice led the picture by
 
 ## 9. Edit agent
 
-`agents/edit_agent/` — a sentence in, a new version or an honest refusal out.
+`agents/edit_agent/`. A sentence in, a new version or an honest refusal out.
 
 ```mermaid
 flowchart LR
@@ -352,7 +352,7 @@ flowchart LR
     form --> intent["EditIntent<br/>change_voice_tone ·<br/>scene_2 · whispered"]
     kw --> intent
     intent --> plan{"Understood<br/>and complete?"}
-    plan -- "no" --> refuse(["Refused, with what<br/>to say instead —<br/>film unchanged"])
+    plan -- "no" --> refuse(["Refused, with what<br/>to say instead,<br/>film unchanged"])
     plan -- "yes" --> exec["Execute steps with<br/>render primitives<br/>render_line · remix · compose"]
     exec -- "all succeed" --> snap[("New version<br/>+ edit_log")]
     exec -. "a step fails" .-> back["Put back the<br/>saved files"] --> refuse
@@ -370,7 +370,7 @@ The 17 edits it can make, by what they change:
 Why the closed form exists: with free-form JSON, a live model classified
 "make the voices in scene 2 whispered" as an invented intent with an invented
 parameter; the planner fell back to re-recording, and the film came back
-identical — reported as success. Measured after the change against both live
+identical, reported as success. Measured after the change against both live
 models: every real phrasing mapped correctly (including "the recipe scene
 should feel darker" → scene 2 by its title), and "make it better" came back
 as *unclear* and was refused.
@@ -419,4 +419,4 @@ so one tool's crash is a result the agent can act on.
 
 Adding a provider is a `_provider_<name>` method (images) or an adapter in
 `mcp/tools/llm_tools/llm_client.py` (models), plus an entry in
-`config/providers.yaml` — never an `if os.getenv(...)` in an agent.
+`config/providers.yaml`, never an `if os.getenv(...)` in an agent.

@@ -41,7 +41,7 @@ after a bug was found where previews were drawn at 512×288 and never matched).
 
 ## ADR-002: A plain-Python orchestrator, not LangGraph
 
-**Context.** The pipeline is a fixed sequence — story, audio, video — with one
+**Context.** The pipeline is a fixed sequence (story, audio, video) with one
 human checkpoint, plus edit and revert operations that are themselves short
 sequences. Progress has to stream, steps have to be cancellable between nodes,
 and the whole thing must run in a test with no network.
@@ -53,8 +53,8 @@ Pydantic `PipelineState`; persistence is the version log.
 **Rejected.** LangGraph, CrewAI, AutoGen. None of the graph shapes here need
 conditional routing, parallel branches or agent-to-agent conversation; a
 framework would add a dependency, its own state model and a debugging layer.
-The node and state shapes match LangGraph's, so adopting it later — for
-example, if agents start choosing their own tools — is mechanical.
+The node and state shapes match LangGraph's, so adopting it later (for
+example, if agents start choosing their own tools) is mechanical.
 
 **Consequences.** Everything is ordinary Python, stack traces point at real
 code, and cancellation lands exactly between nodes.
@@ -73,7 +73,7 @@ heartbeat is two minutes old goes back on the queue, bounded by
 `max_attempts`. A claim also skips any job whose project has an older
 unfinished job, so changes to one film run strictly in order.
 
-**Rejected.** Celery or RQ with Redis — another service to run, secure and
+**Rejected.** Celery or RQ with Redis: another service to run, secure and
 back up, and progress would still need a store the browser can replay.
 
 **Consequences.** Measured: 40 jobs claimed by 4 processes at once, no job
@@ -112,7 +112,7 @@ chain: transient errors retry with back-off where configured, permanent ones
 **Consequences.** Moving to a paid model is a YAML edit. Running it live
 found four provider-specific failures in one session (reasoning models
 returning nothing at small token caps, Cloudflare rejecting `seed`, a
-Pollinations key with no budget, and tests reading the real `.env`) — each
+Pollinations key with no budget, and tests reading the real `.env`), each
 fixed once, in the adapter, for every agent.
 
 ## ADR-006: Sessions in the database, not JWTs
@@ -126,7 +126,7 @@ SHA-256. Sessions last 14 days. Passwords are argon2id with a dummy verify for
 unknown accounts, so login timing does not reveal who is registered; eight
 failures lock an account for 15 minutes.
 
-**Rejected.** JWTs — signing out and disabling an account would need a
+**Rejected.** JWTs: signing out and disabling an account would need a
 denylist or would wait for expiry.
 
 **Consequences.** Sign-out is a row delete; disabling an account ends its
@@ -135,7 +135,7 @@ sessions at once; a stolen database dump cannot be replayed as a login.
 ## ADR-007: Edits are a closed vocabulary
 
 **Context.** With free-form JSON, a live model classified "make the voices in
-scene 2 whispered" as `whisper_voices` with `{"voice_type": "whisper"}` —
+scene 2 whispered" as `whisper_voices` with `{"voice_type": "whisper"}`,
 both invented. The planner fell back to re-recording the same lines in the
 same voice, and the edit reported success. Gemini meanwhile rejected the open
 `parameters` object outright.
@@ -147,8 +147,8 @@ is retried with the error; a request nothing matches is `unclear` and is
 refused with what to say instead; a missing value is asked for by name.
 
 **Consequences.** Measured against both live models: all five real phrasings
-mapped correctly — including "the recipe scene should feel darker" to scene 2
-by its title — and "make it better" was refused. Adding an edit means adding
+mapped correctly (including "the recipe scene should feel darker" to scene 2
+by its title), and "make it better" was refused. Adding an edit means adding
 it to the vocabulary and the executor together.
 
 ## ADR-008: Undo restores files, and history stays linear
@@ -193,7 +193,7 @@ and served by FastAPI at `/`.
 
 **Consequences.** No Node in production, no CORS (`allow_origins` is empty
 unless configured), cookies stay first-party. Server-side rendering is not
-available, which this app does not need — every screen is driven by the
+available, which this app does not need: every screen is driven by the
 user's own server state.
 
 ## ADR-011: One free VM with Compose and Caddy
@@ -217,7 +217,7 @@ instances after a week's notice; the data survives a stop.
 hosts. On one machine it only adds latency and expiring links.
 
 **Decision.** Local disk is the default; only `STORAGE_URL=s3://…` switches
-publishing on. Credentials in the environment do not — a test pins that, so
+publishing on. Credentials in the environment do not; a test pins that, so
 adding a key to try something cannot silently reroute every render.
 
 **Consequences.** Verified against a local S3 server and real R2 (31 assets,
@@ -226,7 +226,7 @@ adding a key to try something cannot silently reroute every render.
 ## ADR-013: Shots render side by side, bounded by cores
 
 **Context.** On the 2-core server a first real film rendered in 6 min 38 s.
-CPU sampling showed shots — 75% of the render — holding ~130% of 200%:
+CPU sampling showed shots (75% of the render) holding ~130% of 200%:
 `zoompan` is single-threaded and shots ran one at a time.
 
 **Decision.** Plan every scene first, then render the shots of all changed

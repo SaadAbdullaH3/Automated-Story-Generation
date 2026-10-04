@@ -24,7 +24,7 @@ def _voice_label(engine: str, voice_id: str) -> str:
     if entry:
         for v in entry.voices:
             if v.id == voice_id and v.label:
-                return v.label.split(" — ")[0].strip()
+                return v.label.split(" · ")[0].strip()
     return voice_id or ""
 
 

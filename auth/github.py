@@ -93,7 +93,7 @@ def authorize_url(state: str, redirect_uri: str) -> str:
 def exchange_code(code: str, redirect_uri: str) -> str:
     """Trade the one-time code for an access token."""
     if not code:
-        raise GitHubError("GitHub didn't send a sign-in code — try again")
+        raise GitHubError("GitHub didn't send a sign-in code, try again")
     res = http.post(TOKEN_URL, timeout=TIMEOUT_S, headers={"Accept": "application/json"},
                     data={"client_id": os.environ["GITHUB_CLIENT_ID"],
                           "client_secret": os.environ["GITHUB_CLIENT_SECRET"],

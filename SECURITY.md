@@ -42,7 +42,7 @@ follow as soon as it is confirmed.
 
 ## Authorisation
 
-- **One place a request becomes a user** — `auth/deps.py`. Routers declare
+- **One place a request becomes a user**: `auth/deps.py`. Routers declare
   `Depends(require_user)` where they are mounted, so an endpoint added later is
   protected the moment it exists; project routes take `require_project`.
 - **`404`, not `403`,** for a project the user does not own.
@@ -60,7 +60,7 @@ follow as soon as it is confirmed.
   redirects. Headers: `Strict-Transport-Security`, `X-Content-Type-Options:
   nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`,
   `X-Frame-Options: DENY`, and the `Server` header removed.
-- The API publishes **no port** in production — it is reachable only through
+- The API publishes **no port** in production; it is reachable only through
   Caddy, which is what makes trusting forwarded headers safe.
 - **CORS** allows no cross-origin request unless `CORS_ORIGINS` names one; the
   web app is served from the API's own origin.

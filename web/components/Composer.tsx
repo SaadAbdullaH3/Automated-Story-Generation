@@ -39,7 +39,7 @@ export function Composer() {
       });
       router.push(`/studio/?id=${encodeURIComponent(run.project_id)}`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't start — is the server running?");
+      setError(err instanceof ApiError ? err.message : "Couldn't start. Is the server running?");
       setBusy(false);
     }
   }
@@ -114,8 +114,8 @@ export function Composer() {
         </p>
       ) : (
         <p className={styles.note}>
-          You&rsquo;ll see every scene, its lines and a first frame before anything is rendered
-          — {scenes} images to plan, and nothing more until you say so.
+          You&rsquo;ll see every scene, its lines and a first frame before anything is rendered.
+          {scenes} images to plan, and nothing more until you say so.
         </p>
       )}
 

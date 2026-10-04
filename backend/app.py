@@ -74,7 +74,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(
     title="Dastango",
     version="1.0.0",
-    description="A short film from one sentence — script, voices, pictures, music and cuts — "
+    description="A short film from one sentence (script, voices, pictures, music and cuts), "
                 "then change it by saying what you want.",
     lifespan=lifespan,
     # The interactive API reference lives under /api, so /docs belongs to the

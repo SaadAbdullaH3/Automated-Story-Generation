@@ -120,7 +120,7 @@ class PipelineOrchestrator:
             description=INITIAL_RUN,
         )
         emit(ProgressEvent(phase="complete", status="complete", project_id=project_id,
-                           message=f"Pipeline finished — version {version.version}",
+                           message=f"Pipeline finished (version {version.version})",
                            progress=1.0,
                            payload={"version": version.version,
                                     "video_path": state.video.final_video_path
@@ -181,7 +181,7 @@ class PipelineOrchestrator:
                     drawn.append(scene.scene_id)
                     emit(ProgressEvent(
                         phase="storyboard", status="frame", project_id=project_id,
-                        message=f"Scene {position[scene.scene_id]} drawn — {scene.title}",
+                        message=f"Scene {position[scene.scene_id]} drawn: {scene.title}",
                         progress=0.5 + 0.45 * len(drawn) / max(1, total),
                         payload={"scene_id": scene.scene_id,
                                  "preview_url": asset_url(path)}))
@@ -198,7 +198,7 @@ class PipelineOrchestrator:
         version = self.sm.snapshot(state, asset_paths=self._collect_assets(state),
                                    description="storyboard")
         emit(ProgressEvent(phase="storyboard", status="complete", project_id=project_id,
-                           message=f"Storyboard ready — {len(state.script.scenes)} scenes",
+                           message=f"Storyboard ready: {len(state.script.scenes)} scenes",
                            progress=1.0,
                            payload={"version": version.version,
                                     "scenes": len(state.script.scenes)}))
@@ -286,7 +286,7 @@ class PipelineOrchestrator:
         version = self.sm.snapshot(state, asset_paths=self._collect_assets(state),
                                    description=RENDERED)
         emit(ProgressEvent(phase="complete", status="complete", project_id=project_id,
-                           message=f"Film rendered — version {version.version}", progress=1.0,
+                           message=f"Film rendered (version {version.version})", progress=1.0,
                            payload={"version": version.version,
                                     "video_path": state.video.final_video_path
                                     if state.video else None}))
@@ -387,7 +387,7 @@ class PipelineOrchestrator:
         if not result.success:
             raise EditFailed(result.error or "the edit could not be applied")
         emit(ProgressEvent(phase="complete", status="complete", project_id=project_id,
-                           message=f"Edit applied — version {result.new_version}",
+                           message=f"Edit applied (version {result.new_version})",
                            progress=1.0,
                            payload={"version": result.new_version, "kind": "edit",
                                     "result": result.model_dump(mode="json")}))

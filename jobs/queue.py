@@ -229,7 +229,7 @@ def requeue_stale(timeout_s: int = STALE_AFTER_S) -> int:
             if row["attempts"] < row["max_attempts"]:
                 c.execute(db.jobs.update().where(db.jobs.c.id == row["id"]).values(
                     status="queued", worker=None, run_after=utcnow(),
-                    error="worker stopped responding — requeued"))
+                    error="worker stopped responding, requeued"))
             else:
                 c.execute(db.jobs.update().where(db.jobs.c.id == row["id"]).values(
                     status="failed", finished_at=utcnow(),

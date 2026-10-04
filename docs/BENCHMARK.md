@@ -1,4 +1,4 @@
-# Benchmark — 2026-10-01T06:02:55
+# Benchmark: 2026-10-01T06:02:55
 
 `python scripts/benchmark.py --duration 24 --scenes 3 --prompts 1 --subtitle-lang Urdu --out docs/BENCHMARK.md`
 
@@ -9,4 +9,4 @@
 |---|---|---|---|---|---|---|---|---|---|
 | A young astronaut discovers a hidden o | 87.8s | 26.6s | 8.6s | 52.4s | 25.4s | 5.8% | yes | 4/4 | 1 |
 
-**Totals** — 1 runs, 87.8s, all in sync: yes, every line on a cut: yes, mean length error 5.8%, fallback images 1.
+**Totals:** 1 runs, 87.8s, all in sync: yes, every line on a cut: yes, mean length error 5.8%, fallback images 1.

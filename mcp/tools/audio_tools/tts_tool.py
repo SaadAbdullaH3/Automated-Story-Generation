@@ -167,7 +167,7 @@ class TtsTool(BaseTool):
         voices = os.getenv("KOKORO_VOICES", "")
         if not (model and voices and Path(model).exists() and Path(voices).exists()):
             raise RuntimeError(
-                "Kokoro model files not found — run `python scripts/get_kokoro.py` "
+                "Kokoro model files not found; run `python scripts/get_kokoro.py` "
                 "and set KOKORO_MODEL / KOKORO_VOICES in .env")
 
         try:
@@ -176,7 +176,7 @@ class TtsTool(BaseTool):
             from kokoro_onnx import Kokoro
         except ImportError as e:
             raise RuntimeError(
-                f"Kokoro needs a package that isn't installed ({e.name}) — "
+                f"Kokoro needs a package that isn't installed ({e.name}); "
                 "run `pip install -r requirements-voices.txt`") from e
 
         global _KOKORO
