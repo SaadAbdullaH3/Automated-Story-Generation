@@ -39,7 +39,7 @@ export function RenderBar({ images, busy, onEngineChange, onRender }: Props) {
     setSampleNote(null);
     try {
       const sample = await api.previewVoice(current.name, current.voices[0]?.id ?? "");
-      if (sample.fell_back) setSampleNote(`${current.label} couldn't speak — that was ${sample.engine}.`);
+      if (sample.fell_back) setSampleNote(`${current.label} couldn't speak. That was ${sample.engine}.`);
       if (!audio.current) audio.current = new Audio();
       audio.current.src = sample.url;
       await audio.current.play().catch(() => undefined);
@@ -72,7 +72,7 @@ export function RenderBar({ images, busy, onEngineChange, onRender }: Props) {
                 .map((e) => (
                   <option key={e.name} value={e.name} disabled={!e.available}>
                     {e.label}
-                    {e.available ? "" : " — unavailable"}
+                    {e.available ? "" : " (unavailable)"}
                   </option>
                 ))}
             </select>

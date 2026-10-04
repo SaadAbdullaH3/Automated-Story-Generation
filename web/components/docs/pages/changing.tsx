@@ -24,7 +24,7 @@ export function Editing() {
   return (
     <>
       <p>
-        Under a finished film, type what you want changed — one sentence, the way you would say it to an
+        Under a finished film, type what you want changed: one sentence, the way you would say it to an
         editor. Dastango first shows what it took that to mean, for example{" "}
         <em>whispered voices · scene 2</em>, then makes exactly that change and nothing else.
       </p>
@@ -136,7 +136,7 @@ export function Editing() {
 
       <h3>The words it knows</h3>
       <p>
-        <strong>Voice tones:</strong> <List words={TONES} />. Close words work too — <em>whisper</em>,{" "}
+        <strong>Voice tones:</strong> <List words={TONES} />. Close words work too: <em>whisper</em>,{" "}
         <em>gentle</em>, <em>happy</em>, <em>nervous</em>.
       </p>
       <p>
@@ -150,23 +150,23 @@ export function Editing() {
       <p>A change applies to the whole film unless you say otherwise:</p>
       <ul>
         <li>
-          <strong>A scene, by number</strong> — <Say>make scene 3 darker</Say>.
+          <strong>A scene, by number</strong>: <Say>make scene 3 darker</Say>.
         </li>
         <li>
-          <strong>A scene, by what it&rsquo;s called</strong> — <Say>the recipe scene should feel darker</Say>.
+          <strong>A scene, by what it&rsquo;s called</strong>: <Say>the recipe scene should feel darker</Say>.
         </li>
         <li>
-          <strong>A character, by name</strong> — <Say>make Mira&rsquo;s voice softer</Say>.
+          <strong>A character, by name</strong>: <Say>make Mira&rsquo;s voice softer</Say>.
         </li>
       </ul>
       <p>
         Changes build on each other: whisper scene 2, then make everyone louder, and scene 2 is a louder
-        whisper — not undone.
+        whisper, not undone.
       </p>
 
       <H2 id="refusals">When it says no</H2>
       <p>
-        If it can&rsquo;t tell what you mean — <Say>make it better</Say> — it says so, suggests the kinds of
+        If it can&rsquo;t tell what you mean (<Say>make it better</Say>), it says so, suggests the kinds of
         thing you can ask for, and changes nothing. If something it needs is missing, it asks:{" "}
         <em>which tone? whispered, soft, …</em>
       </p>
@@ -178,7 +178,7 @@ export function Editing() {
       <H2 id="story-changes">Changes that rewrite the story</H2>
       <p>
         <Say>Regenerate the script</Say> and genre changes write a new story, so the whole film is made
-        again — voices, pictures and all. Voice changes you made to particular scenes don&rsquo;t carry over,
+        again: voices, pictures and all. Voice changes you made to particular scenes don&rsquo;t carry over,
         because those scenes no longer exist.
       </p>
     </>
@@ -190,14 +190,14 @@ export function Versions() {
     <>
       <p>
         Every step that changes a film is saved as a version: the storyboard, each scene you edit, the
-        render, and every change you ask for. They are listed under the film in your own words —{" "}
-        <em>“make the voices in scene 2 whispered”</em> — newest first.
+        render, and every change you ask for. They are listed under the film in your own words{" "}
+        (<em>“make the voices in scene 2 whispered”</em>), newest first.
       </p>
 
       <H2 id="going-back">Going back</H2>
       <p>
-        Press <strong>Go back</strong> on any version. The film returns to exactly how it was then — not just
-        the script, but the recordings, the pictures and the cut — and plays straight away.
+        Press <strong>Go back</strong> on any version. The film returns to exactly how it was then (not just
+        the script, but the recordings, the pictures and the cut) and plays straight away.
       </p>
       <p>
         Going back is itself saved as a <strong>new</strong> version. Nothing is overwritten, so you can go
@@ -207,7 +207,7 @@ export function Versions() {
       <H2 id="what-is-kept">What a version keeps</H2>
       <p>
         Everything the film is made of: the script and cast, every voice recording, every picture and shot,
-        the music, the subtitles and the finished video. That is what makes going back exact — the film you
+        the music, the subtitles and the finished video. That is what makes going back exact: the film you
         get is identical to the one you had.
       </p>
       <Note>Trying a change costs nothing: if you don&rsquo;t like it, go back one version.</Note>

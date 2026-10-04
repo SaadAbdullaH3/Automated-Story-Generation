@@ -34,7 +34,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   } catch {
     // No answer at all: the server is down or restarting. Say so, rather than
     // letting every caller guess with its own vague "couldn't…".
-    throw new ApiError(0, "Can't reach the server — check it's running, then try again.");
+    throw new ApiError(0, "Can't reach the server. Check it's running, then try again.");
   }
   if (!res.ok) {
     let detail = res.statusText;

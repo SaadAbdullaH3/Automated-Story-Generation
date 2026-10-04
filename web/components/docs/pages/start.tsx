@@ -6,7 +6,7 @@ export function Introduction() {
   return (
     <>
       <p>
-        A <strong>dastango</strong> is a teller of <em>dastans</em> — the long tales once performed by
+        A <strong>dastango</strong> is a teller of <em>dastans</em>, the long tales once performed by
         lamplight in the old cities of South Asia. Dastango does the same with one sentence from you: it
         writes the story, casts it, gives every character a voice, draws the pictures, moves the camera,
         scores it, adds subtitles, and cuts it into a short film.
@@ -17,11 +17,11 @@ export function Introduction() {
       <p>Making a film has four moments, and you are in charge at each one.</p>
       <Steps>
         <Step title="Write">
-          One sentence and a length — 20 seconds to a minute, two to six scenes.
+          One sentence and a length: 20 seconds to a minute, two to six scenes.
         </Step>
         <Step title="Storyboard">
           In about twenty seconds you can read the whole film: every scene, its mood, its camera move, its
-          lines and who speaks them, with a first picture for each. Fix anything here — it costs nothing yet.
+          lines and who speaks them, with a first picture for each. Fix anything here. It costs nothing yet.
         </Step>
         <Step title="Render">
           Voices are recorded, every shot is drawn and given a camera move, the music is mixed under the
@@ -44,10 +44,10 @@ export function Introduction() {
         ]}
       />
 
-      <H2 id="what-it-is-not">What it is — and isn&rsquo;t</H2>
+      <H2 id="what-it-is-not">What it is and isn&rsquo;t</H2>
       <p>
         Dastango makes <strong>animated short films from still pictures</strong>: every shot is a generated
-        image brought to life with a camera move — a push in, a slow pan, a pull back — chosen for what the
+        image brought to life with a camera move (a push in, a slow pan, a pull back) chosen for what the
         shot is doing. It is not a video model; faces don&rsquo;t lip-sync and nothing in the frame moves on
         its own. What it does carefully is everything around the pictures: one timeline that keeps voices,
         cuts and subtitles in step to the frame, characters that keep their faces from shot to shot, and
@@ -73,7 +73,7 @@ export function Quickstart() {
       <Steps>
         <Step title="Write one sentence">
           <p>
-            On the home page, type an idea — or tap one of the suggestions to start from it. A person, a
+            On the home page, type an idea, or tap one of the suggestions to start from it. A person, a
             place and something that changes is plenty:
           </p>
           <p>
@@ -113,7 +113,7 @@ export function Quickstart() {
         </Step>
         <Step title="Change something">
           <p>
-            Under the film, type what to change — <Say>make scene 2 darker</Say>, <Say>remove the music</Say>.
+            Under the film, type what to change: <Say>make scene 2 darker</Say>, <Say>remove the music</Say>.
             See <Link href="/docs/editing/">Changing it in words</Link>.
           </p>
         </Step>

@@ -7,8 +7,8 @@ export function Voices() {
   return (
     <>
       <p>
-        Every character speaks in their own voice, chosen to suit who they are — a narrator gets a
-        storyteller&rsquo;s voice, a child a young one, an old man an older one — and keeps it for the whole
+        Every character speaks in their own voice, chosen to suit who they are (a narrator gets a
+        storyteller&rsquo;s voice, a child a young one, an old man an older one) and keeps it for the whole
         film.
       </p>
 
@@ -31,7 +31,7 @@ export function Voices() {
                 <strong>Kokoro</strong> (default)
               </td>
               <td>
-                Natural, expressive voices from an open-source model that runs on the server itself — eight
+                Natural, expressive voices from an open-source model that runs on the server itself: eight
                 voices, US and British, from <em>Heart</em> (warm) to <em>George</em> (a narrator).
               </td>
             </tr>
@@ -41,7 +41,7 @@ export function Voices() {
             </tr>
             <tr>
               <td>Google Translate</td>
-              <td>Clear but flat — no emotion or pacing. A fallback more than a choice.</td>
+              <td>Clear but flat: no emotion or pacing. A fallback more than a choice.</td>
             </tr>
           </tbody>
         </table>
@@ -104,7 +104,7 @@ export function Subtitles() {
       <H2 id="burned-in">Burned in, and as tracks</H2>
       <p>
         The language you choose is <strong>drawn into the picture</strong>, because most video players
-        don&rsquo;t show subtitle tracks unless you switch them on — so it appears wherever the film is
+        don&rsquo;t show subtitle tracks unless you switch them on, so it appears wherever the film is
         played, including after you download it. When that language isn&rsquo;t English, the English text
         comes along as a track you can turn on in the player.
       </p>

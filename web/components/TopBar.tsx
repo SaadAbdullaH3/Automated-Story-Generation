@@ -11,7 +11,7 @@ export function TopBar() {
   return (
     <>
       <header className={styles.bar}>
-        <Link href="/" className={styles.mark} aria-label="Dastango — your films">
+        <Link href="/" className={styles.mark} aria-label="Dastango, your films">
           <Logo />
         </Link>
         <span className={styles.spacer} />

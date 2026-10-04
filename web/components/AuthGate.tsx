@@ -135,7 +135,7 @@ function SignIn({
         : await api.login(email.trim(), password);
       onSignedIn(user);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "That didn't work — try again.");
+      setError(err instanceof ApiError ? err.message : "That didn't work. Try again.");
     } finally {
       setBusy(false);
     }

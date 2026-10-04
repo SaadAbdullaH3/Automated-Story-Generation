@@ -158,7 +158,7 @@ def authenticate(email: str, password: str) -> User:
     now = utcnow()
     if row["locked_until"] and row["locked_until"] > now:
         wait = int((row["locked_until"] - now).total_seconds() // 60) + 1
-        raise AuthError(f"too many failed attempts — try again in {wait} minute(s)")
+        raise AuthError(f"too many failed attempts, try again in {wait} minute(s)")
     if not row["is_active"]:
         raise AuthError("that account is disabled")
 
@@ -255,10 +255,10 @@ def sign_in_external(provider: str, subject: str, login: str,
         return user
     name = _label(provider)
     if not email:
-        raise AuthError(f"{name} didn't share a verified email address — verify one "
+        raise AuthError(f"{name} didn't share a verified email address; verify one "
                         f"there, or sign in with a password")
     if get_by_email(email) is not None:
-        raise AuthError("an account with that email already exists — sign in with your "
+        raise AuthError("an account with that email already exists; sign in with your "
                         f"password, then connect {name} from the top bar")
     if not signups_allowed():
         raise AuthError("sign-ups are closed on this deployment")

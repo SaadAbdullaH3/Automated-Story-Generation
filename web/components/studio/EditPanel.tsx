@@ -67,7 +67,7 @@ export function EditPanel({ film, cast, events, running, elapsed, onSubmit, onSt
           className={`input ${styles.editInput}`}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Say what to change — “make the voices in scene 2 whispered”"
+          placeholder="Say what to change: “make the voices in scene 2 whispered”"
           aria-label="What to change"
           disabled={busy}
           maxLength={300}
@@ -103,7 +103,7 @@ export function EditPanel({ film, cast, events, running, elapsed, onSubmit, onSt
               </button>
             )}
           </p>
-          {failed && <p className={styles.editNote}>Nothing was changed — the film is as it was.</p>}
+          {failed && <p className={styles.editNote}>Nothing was changed. The film is as it was.</p>}
         </div>
       )}
     </section>

@@ -165,7 +165,7 @@ def github_callback(request: Request, code: str = "", state: str = "", error: st
     if not github.states_match(expected, state):
         # Checked before the code is spent: a forged callback costs nothing.
         return _back_to_app(request, auth_error=(
-            "that sign-in link expired or wasn't started here — try again"))
+            "that sign-in link expired or wasn't started here, try again"))
     try:
         token = github.exchange_code(code, github.callback_url(str(request.base_url)))
         gh = github.fetch_user(token)
@@ -179,7 +179,7 @@ def github_callback(request: Request, code: str = "", state: str = "", error: st
         return _back_to_app(request, auth_error=str(e))
     except requests.RequestException:
         log.warning("GitHub could not be reached during sign-in", exc_info=True)
-        return _back_to_app(request, auth_error="couldn't reach GitHub — try again")
+        return _back_to_app(request, auth_error="couldn't reach GitHub, try again")
 
     res = _back_to_app(request)
     _start_session(res, signed_in, request)

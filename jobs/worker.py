@@ -200,7 +200,7 @@ def run_forever(poll_interval: float = 1.0, kinds: Optional[Sequence[str]] = Non
             run_job(job)
         except Exception:  # noqa: BLE001 — one bad job must not end the worker
             log.exception("job %s crashed outside the pipeline", job.id)
-            queue.fail(job.id, "worker error — see the worker log")
+            queue.fail(job.id, "worker error, see the worker log")
     log.info("worker %s stopped", me)
 
 

@@ -294,7 +294,7 @@ class EditExecutor:
     @staticmethod
     def _require_video(state: PipelineState):
         if not state.video or not state.script:
-            raise ValueError("this edit needs a rendered video — run the pipeline first")
+            raise ValueError("this edit needs a rendered video; run the pipeline first")
         return state.video
 
     @staticmethod

@@ -11,7 +11,7 @@ export function describe(ev: ProgressEvent | undefined): string {
     case "story:complete":
       return "Script written";
     case "storyboard:script":
-      return `${scenes ?? "The"} scenes written — drawing them now`;
+      return `${scenes ?? "The"} scenes written, drawing them now`;
     case "storyboard:started":
       return "Drawing the storyboard";
     case "storyboard:frame":
@@ -41,7 +41,7 @@ export function describe(ev: ProgressEvent | undefined): string {
     case "cancelled:cancelled":
       return "Stopped";
     case "error:retrying":
-      return "Hit a snag — trying again";
+      return "Hit a snag, trying again";
     case "error:failed":
       return "This one didn't make it";
   }

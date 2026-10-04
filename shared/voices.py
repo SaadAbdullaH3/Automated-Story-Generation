@@ -47,14 +47,14 @@ ENGINES: List[Engine] = [
         open_source=True,
         requires=["KOKORO_MODEL", "KOKORO_VOICES"],
         voices=[
-            Voice("af_heart", "Heart — US, warm", "female"),
-            Voice("af_bella", "Bella — US, bright", "female"),
-            Voice("af_nicole", "Nicole — US, young", "female"),
-            Voice("bf_emma", "Emma — British", "female"),
-            Voice("am_michael", "Michael — US", "male"),
-            Voice("am_adam", "Adam — US, dry", "male"),
-            Voice("bm_george", "George — British, narrator", "male"),
-            Voice("bm_lewis", "Lewis — British, older", "male"),
+            Voice("af_heart", "Heart · US, warm", "female"),
+            Voice("af_bella", "Bella · US, bright", "female"),
+            Voice("af_nicole", "Nicole · US, young", "female"),
+            Voice("bf_emma", "Emma · British", "female"),
+            Voice("am_michael", "Michael · US", "male"),
+            Voice("am_adam", "Adam · US, dry", "male"),
+            Voice("bm_george", "George · British, narrator", "male"),
+            Voice("bm_lewis", "Lewis · British, older", "male"),
         ],
     ),
     Engine(
@@ -63,21 +63,21 @@ ENGINES: List[Engine] = [
         summary="Microsoft's neural voices. Free and very natural, but online.",
         needs_network=True,
         voices=[
-            Voice("en-US-AriaNeural", "Aria — US", "female"),
-            Voice("en-US-JennyNeural", "Jenny — US, friendly", "female"),
-            Voice("en-GB-SoniaNeural", "Sonia — British", "female"),
-            Voice("en-AU-NatashaNeural", "Natasha — Australian", "female"),
-            Voice("en-US-AnaNeural", "Ana — US, child", "female"),
-            Voice("en-US-GuyNeural", "Guy — US", "male"),
-            Voice("en-US-ChristopherNeural", "Christopher — US, narrator", "male"),
-            Voice("en-GB-RyanNeural", "Ryan — British", "male"),
-            Voice("en-AU-WilliamNeural", "William — Australian", "male"),
+            Voice("en-US-AriaNeural", "Aria · US", "female"),
+            Voice("en-US-JennyNeural", "Jenny · US, friendly", "female"),
+            Voice("en-GB-SoniaNeural", "Sonia · British", "female"),
+            Voice("en-AU-NatashaNeural", "Natasha · Australian", "female"),
+            Voice("en-US-AnaNeural", "Ana · US, child", "female"),
+            Voice("en-US-GuyNeural", "Guy · US", "male"),
+            Voice("en-US-ChristopherNeural", "Christopher · US, narrator", "male"),
+            Voice("en-GB-RyanNeural", "Ryan · British", "male"),
+            Voice("en-AU-WilliamNeural", "William · Australian", "male"),
         ],
     ),
     Engine(
         name="gtts",
         label="Google Translate TTS",
-        summary="Free and online. Clear, but flat — no emotion or pacing control.",
+        summary="Free and online. Clear, but flat: no emotion or pacing control.",
         needs_network=True,
         voices=[Voice("", "Default", "neutral")],
     ),
@@ -127,7 +127,7 @@ def unavailable_reason(engine: Engine) -> Optional[str]:
         if not (model and voices):
             return "set KOKORO_MODEL and KOKORO_VOICES (python scripts/get_kokoro.py)"
         if not (Path(model).exists() and Path(voices).exists()):
-            return "model files are missing — run python scripts/get_kokoro.py"
+            return "model files are missing; run python scripts/get_kokoro.py"
         try:
             import kokoro_onnx  # noqa: F401
         except ImportError:

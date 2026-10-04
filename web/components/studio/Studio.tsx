@@ -243,7 +243,7 @@ export function Studio() {
           <p className={styles.status} aria-live="polite">
             {running && <span className="pip" />}
             <span className={failed ? styles.statusFailed : undefined}>
-              {failed ? `${describe(last)} — ${last?.message}` : describe(last)}
+              {failed ? `${describe(last)}: ${last?.message}` : describe(last)}
             </span>
             {running && elapsed != null && <span className="meta">· {elapsed}s</span>}
             {running && (
