@@ -31,6 +31,10 @@
 .topSpacer {
   flex: 1;
 }
+/* Buttons keep to one line however narrow the header gets. */
+.top :global(.btn) {
+  white-space: nowrap;
+}
 .layout {
   display: grid;
   grid-template-columns: 236px minmax(0, 1fr) 200px;
