@@ -1,6 +1,6 @@
 # Testing and quality
 
-**388 tests**, fully offline, on Linux and Windows in CI — plus the checks
+**388 tests**, fully offline, on Linux and Windows in CI, plus the checks
 that only mean something inside the production image, run inside it.
 
 ## How the suite is built
@@ -13,7 +13,7 @@ right length, points every data path at a temporary directory, sets
 real `.env` or spend real quota, and CI needs no secrets.
 
 **Through the real path.** Behaviour tests go through `plan`, `render`,
-`EditAgent.edit` and the HTTP API — the same calls the product makes — and
+`EditAgent.edit` and the HTTP API (the same calls the product makes) and
 render real (small: 320×180 at 12 fps) films with ffmpeg. Twice a unit test
 passed on a code path nothing used: preview reuse was tested by drawing the
 storyboard directly at a matching size, while the real `plan` drew it at
@@ -26,7 +26,7 @@ from the last milestone:
 
 | Test | On the old code |
 |---|---|
-| Two shots render at once | `assert 1 == 2` — one shot at a time |
+| Two shots render at once | `assert 1 == 2`: one shot at a time |
 | A Kokoro voice, then System voices, leaves the process alive | the subprocess exits with code 1: `Error processing file '…/phontab'` |
 | Translation names the provider that answered | `llm:gemini` instead of `llm:groq` |
 | Six processes boot against one fresh database | 5 of 6 crash creating the schema |
@@ -72,7 +72,7 @@ docker run --rm -e PIPELINE_SKIP_DOTENV=1 storygen:local python -m pytest -q \
 | Job | What |
 |---|---|
 | `ubuntu-latest · python 3.11` / `3.12` | `compileall` (a syntax error in a file no test imports still fails), then the suite with ffmpeg and the Noto fonts |
-| `windows-latest · python 3.11` | The suite on the development OS — fonts and path separators differ |
+| `windows-latest · python 3.11` | The suite on the development OS (fonts and path separators differ) |
 | `web · build and typecheck` | `npm ci` from the lock file, `next build`, `tsc --noEmit`, and a check that the export contains the pages FastAPI serves |
 | `image · build and run` | Builds the production image (cached), imports the database, S3 and voice drivers, runs the in-image tests, starts the whole stack on a fresh database and fails on any container restart |
 
@@ -87,7 +87,7 @@ kept:
 
 - `scripts/benchmark.py` runs fixed prompts and reports time per phase, length
   against target, frame-exact sync, lines on cuts, and which provider served
-  each image — so a silent downgrade shows up as a number. Results:
+  each image, so a silent downgrade shows up as a number. Results:
   [BENCHMARK.md](BENCHMARK.md).
 - Camera smoothness by phase correlation on real shot clips (worst
   frame-to-frame jump 0.19 px).

@@ -1,6 +1,6 @@
 # Deploying to a server
 
-The whole app — web interface, API, workers, Postgres, HTTPS — runs on one
+The whole app (web interface, API, workers, Postgres, HTTPS) runs on one
 small Linux machine with Docker Compose. The target is Oracle Cloud's Always
 Free ARM VM: **2 OCPUs and 12 GB of RAM** (cut from 4/24 in June 2026), free
 for good, with no card charge as long as you stay on Always Free resources.
@@ -15,9 +15,9 @@ once to use both cores (one at a time, a film like that took 6 min 38 s).
 
 1. Create the account at <https://www.oracle.com/cloud/free/>. It asks for a
    card to verify you; Always Free resources are never charged. **Choose the
-   home region carefully — it can't be changed**, and ARM capacity varies by
+   home region carefully; it can't be changed**, and ARM capacity varies by
    region.
-2. **The network first** — Networking → Virtual cloud networks → **Start VCN
+2. **The network first**: Networking → Virtual cloud networks → **Start VCN
    Wizard → Create VCN with Internet Connectivity**. It makes the public
    subnet *and* the internet gateway and route a public address needs. (A VCN
    made any other way has neither: the instance form's "assign a public IPv4
@@ -36,7 +36,7 @@ once to use both cores (one at a time, a film like that took 6 min 38 s).
    "Out of host capacity" is common for A1 shapes: try another availability
    domain, or again later. The cost estimate on the review page ignores the
    free tier (it says so); 100 GB of the 200 GB free storage is covered.
-4. **Open the web ports** — Networking → Virtual cloud networks → your VCN →
+4. **Open the web ports**: Networking → Virtual cloud networks → your VCN →
    the subnet's security list → *Add ingress rules*, source `0.0.0.0/0`:
    TCP 80, TCP 443, and UDP 443 (HTTP/3). The VM's own firewall is opened by
    the setup script; both have to allow a port.
@@ -59,13 +59,13 @@ cd storygen && bash deploy/setup-vm.sh
 ```
 
 The script (safe to run again) installs Docker, opens ports 80/443 in the
-VM's iptables — Oracle's Ubuntu image rejects everything but SSH — gives the
+VM's iptables (Oracle's Ubuntu image rejects everything but SSH), gives the
 `data/` folder to the containers' user (uid 10001; without it the first film
 fails with "permission denied"), and writes a `.env` with a generated
 database password and `DOMAIN`.
 
 **The address.** Without a domain of your own, `DOMAIN` is set to
-`<your-ip-with-dashes>.sslip.io` — a free name that resolves to your IP, no
+`<your-ip-with-dashes>.sslip.io`, a free name that resolves to your IP, no
 account needed, and Caddy gets a real certificate for it. To use your own name
 instead, point an A record at the VM and set `DOMAIN` in `.env`.
 
@@ -82,7 +82,7 @@ the administrator.
 
 **GitHub sign-in:** in the OAuth app's settings, add a redirect URI
 `https://<DOMAIN>/api/auth/github/callback` (an app takes up to ten, so the
-laptop's `http://localhost:8000/...` one can stay; the match is exact — a
+laptop's `http://localhost:8000/...` one can stay; the match is exact: a
 stray character and GitHub refuses with "redirect_uri is not associated with
 this application"). Put the app's id and secret in the server's `.env` and
 restart the API. Then sign in with your password and use **Connect GitHub** in
@@ -112,6 +112,12 @@ Both `api` and `worker` report health: the API through `/health`, the worker
 by having reached the job queue in the last two minutes. A worker that can't
 reach the database turns unhealthy rather than looking fine.
 
+An update that changes `deploy/Caddyfile` needs one more step:
+`docker compose $P up -d --no-deps --force-recreate caddy`. `git pull`
+replaces the file instead of editing it, and the running container keeps
+reading the old one through its bind mount, so `caddy reload` on its own
+serves the old configuration.
+
 ## Backups
 
 The database (accounts, every version, the queue) and `data/` (the films and
@@ -124,22 +130,22 @@ mkdir -p ~/backups
 
 Each night is a `pg_dump` plus an rsync snapshot of `data/` hard-linked to the
 night before, so a night costs only what changed; the newest seven of each
-are kept (`BACKUP_KEEP`). To put one back — it replaces the current database
-and films:
+are kept (`BACKUP_KEEP`). To put one back (it replaces the current database
+and films):
 
 ```bash
 bash deploy/restore.sh latest          # or a name from ~/backups/db
 ```
 
 This was tested as a round trip: back up twice, empty the database and delete
-the films, restore — the account, its version and every file came back,
+the films, restore: the account, its version and every file came back,
 owned by the containers' user, and the account could sign in and see its
 film.
 
 ### Off the machine
 
 Backups on the VM's own disk cover mistakes, not losing the VM. Name a bucket
-in `.env` and every nightly run also sends them to it — any S3-compatible one;
+in `.env` and every nightly run also sends them to it (any S3-compatible one);
 Cloudflare R2 is free to 10 GB, with the same keys the app would use:
 
 ```bash

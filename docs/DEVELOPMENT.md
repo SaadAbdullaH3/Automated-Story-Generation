@@ -126,7 +126,7 @@ docs/               this documentation
 ## Extending it
 
 **A new edit.** Add it to `EDITS` in `agents/edit_agent/vocabulary.py` (its
-target, what it needs, what it means — the model's form is generated from
+target, what it needs, what it means; the model's form is generated from
 this), a plan in `planner.py`, a step in `executor.py` built from existing
 agent primitives, words for it in `describe.py`, and a test through
 `EditAgent.edit` on a rendered film.
@@ -137,4 +137,4 @@ agent primitives, words for it in `describe.py`, and a test through
 `video.something`, and register it in its category's `__init__.py`.
 
 **A schema change.** `shared/schemas/` is the contract between every phase and
-every stored version — add fields with defaults so old versions still load.
+every stored version. Add fields with defaults so old versions still load.

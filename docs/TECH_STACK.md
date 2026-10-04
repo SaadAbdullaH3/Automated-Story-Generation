@@ -75,7 +75,7 @@ flowchart LR
         direction TB
         orch["Orchestrator<br/>plain-Python node graph"]
         schema["Pydantic v2<br/>ScriptOutput · EditDraft<br/>schemas as the contract"]
-        registry["Tool registry — mcp/<br/>ToolExecutor · ToolResult"]
+        registry["Tool registry (mcp/)<br/>ToolExecutor · ToolResult"]
         chains["Provider chains<br/>PyYAML · config/providers.yaml"]
         memory["StateManager<br/>versions + snapshots"]
     end
@@ -140,7 +140,7 @@ flowchart LR
 | **Next.js** (App Router, `output: export`) | 16.3 | `web/` | Static export means no Node server in production: FastAPI serves the built files from the same origin, so there is no CORS and one container. |
 | **React** | 19.3 | `web/components/` | The storyboard streams in event by event; components re-render from server state only. |
 | **TypeScript** | 5.9 (pinned) | `web/lib/types.ts` | API responses are typed end to end. Pinned below 6.x while Next 16's type-check path is proven on 5.9. |
-| **CSS Modules + next/font** | — | `web/components/*.module.css`, `web/lib/fonts.ts` | Three modules and a token file are the whole design system. Fonts are self-hosted at build time, so a page load never calls Google. |
+| **CSS Modules + next/font** | with Next.js | `web/components/*.module.css`, `web/lib/fonts.ts` | Three modules and a token file are the whole design system. Fonts are self-hosted at build time, so a page load never calls Google. |
 | **argparse CLI** | stdlib | `main.py` | Every operation the UI has, scriptable: `plan`, `render`, `edit`, `jobs`, `users`, `providers`. |
 
 ### API and execution
@@ -161,10 +161,10 @@ flowchart LR
 | Service or model | SDK | Role | Why |
 |---|---|---|---|
 | **Gemini Flash** (`gemini-flash-latest`) | `google-genai` 2.28 | script, edit intent, translation | Free tier, native structured output (response schema); the alias survives model retirements. |
-| **Groq** — `openai/gpt-oss-120b`, `gpt-oss-20b` | `openai` 3.24 | fallback for the same roles | Free and fast; reached through the OpenAI-compatible API, so it costs no new client code. |
+| **Groq**: `openai/gpt-oss-120b`, `gpt-oss-20b` | `openai` 3.24 | fallback for the same roles | Free and fast; reached through the OpenAI-compatible API, so it costs no new client code. |
 | **OpenRouter** (`openrouter/free`), **Ollama** | `openai` | further fallbacks | A third free option and a fully local one. |
 | **Claude, OpenAI** | `anthropic`, `openai` | paid options in the chain | Present so moving to a paid model is a YAML edit, not code. |
-| **Cloudflare Workers AI — FLUX.1-schnell** | HTTP | images | 10,000 free neurons a day (~170 images), four at a time. |
+| **Cloudflare Workers AI: FLUX.1-schnell** | HTTP | images | 10,000 free neurons a day (~170 images), four at a time. |
 | **Pollinations** | HTTP | images, fallback | Keyed (budgeted) and keyless endpoints; keyless is one request per IP. |
 | **Kokoro-82M** | `kokoro-onnx` 0.6 on `onnxruntime` 1.30 | voices (default) | Apache-2.0, runs on CPU with no GPU and no torch; ~2 s a line on a laptop. Model files verified by SHA-256. |
 | **Edge TTS**, **gTTS**, **pyttsx3** | `edge-tts` 7.2, `gTTS` 2.5 | voice fallbacks | Free online neural voices, then simpler ones; pyttsx3 only where the OS has a speech engine. |
@@ -189,7 +189,7 @@ flowchart LR
 | **boto3 → Cloudflare R2** | `shared/assets.py`, `scripts/offsite_backup.py` | S3-compatible, free to 10 GB with no egress charge. Assets publish there only when `STORAGE_URL` says so; backups go there nightly. |
 | **Docker** (multi-stage) | `Dockerfile` | Node 22 builds the UI; Python 3.11-slim runs everything with ffmpeg and the fonts; runs as uid 10001, never root. |
 | **Docker Compose** | `docker-compose.yml`, `deploy/docker-compose.prod.yml` | The whole stack in one file; the prod override adds Caddy and removes the API's public port. |
-| **Caddy 2** | `deploy/Caddyfile` | Automatic certificates and renewal, HTTP/3, security headers — in twenty lines of config. |
+| **Caddy 2** | `deploy/Caddyfile` | Automatic certificates and renewal, HTTP/3, security headers, in twenty lines of config. |
 | **Oracle Cloud Always Free** | `deploy/README.md` | 2 OCPU / 12 GB arm64 for $0. |
 | **sslip.io** | `DOMAIN` in the server `.env` | A real hostname for an IP, so HTTPS works without buying a domain. |
 | **cron + rsync + pg_dump** | `deploy/backup.sh` | Nightly backups hard-linked to the previous night; restore is a tested script. |
@@ -200,8 +200,8 @@ flowchart LR
 |---|---|---|
 | **pytest** (+ pytest-asyncio, pytest-timeout) | 9.1 | 382 tests, fully offline: mock LLM, placeholder images, silent voices. |
 | **moto** | 5.2 | A local fake of S3 for the backup and storage tests. |
-| **FastAPI TestClient** (httpx) | — | API, auth and WebSocket tests without a server. |
-| **GitHub Actions** | — | Ubuntu 3.11 and 3.12, Windows 3.11, the web build and typecheck, and the production image built and tested on every push. |
+| **FastAPI TestClient** (httpx) | with FastAPI | API, auth and WebSocket tests without a server. |
+| **GitHub Actions** | hosted | Ubuntu 3.11 and 3.12, Windows 3.11, the web build and typecheck, and the production image built and tested on every push. |
 
 ---
 
@@ -216,4 +216,4 @@ flowchart LR
 | MoviePy, OpenCV | FFmpeg directly | Frame-exact control and one dependency; both were removed (265 MB) when nothing used them. |
 | Tailwind, a component library | CSS Modules | Fewer dependencies and a smaller build for a small UI. |
 | PyTorch | onnxruntime | Kokoro runs on onnxruntime without the ~2 GB torch install, on any CPU. |
-| A managed PaaS | One VM with Compose | $0, and the whole stack — including the database — is under the project's control and backups. |
+| A managed PaaS | One VM with Compose | $0, and the whole stack (including the database) is under the project's control and backups. |

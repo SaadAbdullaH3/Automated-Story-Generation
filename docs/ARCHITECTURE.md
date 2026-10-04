@@ -2,8 +2,8 @@
 
 How the system is put together, from the outside in: what it talks to, the
 processes it runs as, the components inside them, how a request becomes a
-film, and the data that persists. The agents themselves — how a prompt becomes
-a script, voices and shots — are in [AGENTS.md](AGENTS.md); every framework
+film, and the data that persists. The agents themselves (how a prompt becomes
+a script, voices and shots) are in [AGENTS.md](AGENTS.md); every framework
 and why it was chosen is in [TECH_STACK.md](TECH_STACK.md).
 
 - [1. System context](#1-system-context)
@@ -21,8 +21,8 @@ and why it was chosen is in [TECH_STACK.md](TECH_STACK.md).
 ## 1. System context
 
 One product, one origin. A creator uses the web app (or the CLI); everything
-the product cannot do on its own machine — language models, image models,
-online voices — is a provider behind a swappable chain, and every chain ends
+the product cannot do on its own machine (language models, image models,
+online voices) is a provider behind a swappable chain, and every chain ends
 in something that works offline.
 
 ```mermaid
@@ -55,7 +55,7 @@ flowchart LR
 | Gemini, Groq, OpenRouter | Writing the script, reading an edit, translating subtitles | The next model in the chain answers; with none, a deterministic template writes the script and a keyword classifier reads edits |
 | Cloudflare Workers AI, Pollinations | Storyboard and shot images | The next provider draws it; a local placeholder guarantees a file exists |
 | Edge TTS, gTTS | Voices when Kokoro is not installed | Kokoro runs offline; silence of the right length keeps timing intact |
-| MyMemory | Subtitle translation when no LLM can | That language is skipped — an English track is never shipped under a foreign label |
+| MyMemory | Subtitle translation when no LLM can | That language is skipped; an English track is never shipped under a foreign label |
 | GitHub | Optional sign-in | Email and password still work |
 | Cloudflare R2 | Off-machine copy of the nightly backup | Local snapshots on the VM still exist |
 
@@ -110,7 +110,7 @@ flowchart TB
 | `api` | the app image (`Dockerfile`, multi-stage: Node 22 builds the UI, Python 3.11 runs it) | `GET /health` |
 | `worker` | the same image, `python main.py worker` | Touches a file each time it reaches the queue; stale for 2 min → unhealthy |
 | `db` | `postgres:16-alpine` | `pg_isready` |
-| `models` | the app image, runs once per start | Fetches and SHA-256-verifies the model; a failed download never blocks the app — voices fall back to Edge TTS |
+| `models` | the app image, runs once per start | Fetches and SHA-256-verifies the model; a failed download never blocks the app; voices fall back to Edge TTS |
 
 On a laptop the same code runs as **one process**: `python main.py serve`
 starts the API with a worker thread inside it and uses a SQLite file in WAL
@@ -125,7 +125,7 @@ the only thing the API and the worker have in common.
 
 ```mermaid
 flowchart TB
-    subgraph apiP["API process — backend/"]
+    subgraph apiP["API process (backend/)"]
         direction TB
         routes["routes/<br/>auth · pipeline · edit · history<br/>jobs · projects · voices"]
         wsr["websocket/progress.py<br/>replays job_events rows"]
@@ -133,7 +133,7 @@ flowchart TB
         deps["auth/deps.py<br/>require_user · require_project"]
     end
 
-    subgraph wkP["Worker process — jobs/worker.py"]
+    subgraph wkP["Worker process (jobs/worker.py)"]
         direction TB
         loop["claim → run → publish → finish"] --> orch["agents/orchestrator<br/>PipelineOrchestrator"]
         orch --> ag["Story · Audio · Video · Edit agents"]
@@ -164,7 +164,7 @@ flowchart TB
 | Progress | `backend/services/progress.py`, `backend/websocket/` | Streams a project's job events to the browser by reading rows (every 0.4 s), so a reload or a worker on another host loses nothing. |
 | Job queue | `jobs/queue.py` | Runs are rows. One atomic `UPDATE` per claim; one job per project at a time, in order. |
 | Worker | `jobs/worker.py` | Claims, heartbeats every 15 s, runs the orchestrator, publishes assets, records the outcome. |
-| Orchestrator | `agents/orchestrator/` | `plan`, `render`, `run_full`, `edit`, `revert` — each a small graph of agent steps that emits progress events. |
+| Orchestrator | `agents/orchestrator/` | `plan`, `render`, `run_full`, `edit`, `revert`: each a small graph of agent steps that emits progress events. |
 | Agents | `agents/*_agent/` | The work: script, voices, pictures, edits. See [AGENTS.md](AGENTS.md). |
 | Tool layer | `mcp/` | An internal registry of 23 tools (`audio.tts`, `vision.generate_image`, `video.compose`, …). Each tool walks its provider chain. Not the MCP protocol. |
 | Providers | `shared/providers.py`, `config/providers.yaml` | Which model serves each role, in order. Agents never name a model. |
@@ -194,16 +194,16 @@ sequenceDiagram
     C->>W: Writes one sentence
     W->>A: POST /api/pipeline/plan
     A->>DB: insert job (plan, queued)
-    A-->>W: queued — project_id and job_id, in milliseconds
+    A-->>W: queued (project_id and job_id), in milliseconds
     W->>A: open WS /ws/progress/{project_id}
     K->>DB: claim the oldest runnable job in one UPDATE
     K->>O: plan(prompt)
-    O->>P: structured script — Gemini, else Groq, else OpenRouter, else template
+    O->>P: structured script (Gemini, else Groq, else OpenRouter, else template)
     O->>DB: event storyboard/script (scenes, cast, image cost)
     Note over A,DB: The socket reads new job_events rows every 0.4 s
     A-->>W: the script appears, every scene readable
     loop one preview per scene
-        O->>P: image — Cloudflare FLUX, else Pollinations, else placeholder
+        O->>P: image (Cloudflare FLUX, else Pollinations, else placeholder)
         O->>DB: event storyboard/frame
         A-->>W: that frame develops in
     end
@@ -214,9 +214,9 @@ sequenceDiagram
     W->>A: PATCH storyboard scene, then POST /api/pipeline/render/{project_id}
     A->>DB: insert job (render, queued)
     K->>O: render(project_id)
-    O->>O: Audio agent — voices, timeline, music, master
+    O->>O: Audio agent: voices, timeline, music, master
     O->>P: portraits and shot images
-    O->>O: Video agent — shots on the timeline, scenes, film, subtitles
+    O->>O: Video agent: shots on the timeline, scenes, film, subtitles
     O->>DB: snapshot version 2, stage rendered
     K->>DB: job succeeded
     A-->>W: complete
@@ -258,17 +258,17 @@ sequenceDiagram
     A->>K: job (edit, max_attempts 1)
     K->>E: edit(project_id, query)
     E->>S: put back the saved version's files
-    E->>M: fill a closed form — intent, scope, parameters
+    E->>M: fill a closed form: intent, scope, parameters
     M-->>E: change_voice_tone · scene_2 · tone whispered
-    E-->>A: event understood — "whispered voices · scene 2"
+    E-->>A: event understood: "whispered voices · scene 2"
     alt understood and complete
-        E->>E: plan steps — rerun_audio(scene_2), recompose_video
+        E->>E: plan steps: rerun_audio(scene_2), recompose_video
         E->>E: execute with the same agent primitives a render uses
         E->>S: snapshot as a new version
-        E-->>A: complete — new version
+        E-->>A: complete (new version)
     else unclear, incomplete, or a step fails
         E->>S: put back the saved version's files
-        E-->>A: refused with what to say instead — film unchanged
+        E-->>A: refused with what to say instead (film unchanged)
     end
 ```
 
@@ -298,12 +298,12 @@ stateDiagram-v2
 ```
 
 - **retry** happens when a run fails with attempts left (after a 5 s
-  back-off), or when its worker stops heartbeating for 120 s — a crashed or
+  back-off), or when its worker stops heartbeating for 120 s: a crashed or
   killed worker's job goes back on the queue.
 - **cancel** stops a queued job at once and a running one at its next step
   boundary.
 - A claim skips any job whose project still has an **older unfinished job**,
-  so two workers can never run two changes to one film at once — decided by
+  so two workers can never run two changes to one film at once, decided by
   that row's existence, which holds under `SKIP LOCKED`.
 - Pipeline runs get two attempts; edits and reverts get one (a half-applied
   edit is rolled back, not retried).
@@ -330,7 +330,7 @@ stateDiagram-v2
 
 ## 7. Data model
 
-One database holds the version log, the job queue, and accounts — SQLite by
+One database holds the version log, the job queue, and accounts: SQLite by
 default, PostgreSQL in production, the same SQL through SQLAlchemy Core.
 
 ```mermaid
@@ -450,7 +450,7 @@ flowchart LR
 |---|---|
 | HTTPS | Caddy obtains and renews a Let's Encrypt certificate; `sslip.io` gives a real hostname without buying a domain |
 | Only one way in | The API publishes no port in production; it is reachable only through Caddy, which is what makes trusting `X-Forwarded-*` safe |
-| First boot | API and worker race to create the schema — Postgres takes an advisory lock, SQLite retries |
+| First boot | API and worker race to create the schema; Postgres takes an advisory lock, SQLite retries |
 | Secrets | `.env` on the server, mode 600, never in git; compose pins container paths over anything in it |
 | Backups | Nightly `pg_dump` + rsync snapshot hard-linked to the previous night (7 kept), and the changed files pushed to R2 (14 dumps kept) |
 | Restore | `deploy/restore.sh latest` or `bucket`; both proven by deleting the data and restoring it |
@@ -471,7 +471,7 @@ flowchart LR
     i2 --> i3["compose up on a fresh database<br/>/ready answers · zero restarts"]
 ```
 
-The suite is fully offline — a mock LLM, placeholder images and silent voices —
+The suite is fully offline (a mock LLM, placeholder images and silent voices),
 so CI needs no secrets and spends no one's quota.
 
 ---
@@ -482,7 +482,7 @@ so CI needs no secrets and spends no one's quota.
 `success=False` or raises; the chain moves on and the log says which provider
 served each image. Translation that fails skips the language. An edit that
 cannot be carried out is refused, not reported as done. A render with every
-image provider exhausted still completes — with placeholders, and says so.
+image provider exhausted still completes, with placeholders, and says so.
 
 **Timing has one owner.** `shared/timeline.py` places every line; video
 converts *absolute* millisecond boundaries to frames (never durations), so
